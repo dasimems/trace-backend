@@ -1,0 +1,19 @@
+export enum VerificationType {
+  EMAIL_VERIFICATION = 'EMAIL_VERIFICATION',
+  FORGOT_PASSWORD = 'FORGOT_PASSWORD',
+  CHANGE_EMAIL = 'CHANGE_EMAIL',
+  CHANGE_MOBILE = 'CHANGE_MOBILE',
+  ACCOUNT_CREATION = 'ACCOUNT_CREATION',
+}
+
+export enum NodeEnv {
+  DEVELOPMENT = 'development',
+  PRODUCTION = 'production',
+  TEST = 'test',
+}
+
+export enum AuthType {
+  MAGIC_LINK = 'MAGIC_LINK',
+  PASSWORD = 'PASSWORD',
+  SOCIAL_LOGIN = 'SOCIAL_LOGIN',
+}

@@ -1,0 +1,23 @@
+export const routes = {
+    auth: '/auth',
+    user: '/user',
+  },
+  subRoutes = {
+    user: '/user',
+    email: '/email',
+    check: '/check',
+    link: '/link',
+    accept: '/accept',
+    otp: '/otp',
+    send: '/send',
+    verify: '/verify',
+    password: '/password',
+    change: '/change',
+    login: '/login',
+    register: '/register',
+    phoneNumber: '/mobile',
+    location: '/location',
+    settings: '/settings',
+    sub: '/sub',
+    pin: '/pin',
+  };

@@ -1,0 +1,13 @@
+// This is your Prisma schema file.
+// Add your models below. The generator + datasource are pre-configured to
+// match what the common/prisma module expects.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
