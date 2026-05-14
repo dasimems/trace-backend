@@ -149,6 +149,24 @@ export class PasswordService {
     return isPasswordVerified;
   }
 
+  // Decode-only helper for the reset-password flow: the caller needs the
+  // userId from the token to look up the user (and their createdAt) BEFORE
+  // calling verifyChangePasswordToken — which requires the real createdAt to
+  // compute the cache key. No cache lookup happens here; this is purely
+  // "what userId does this token claim?", subject to the encryption key + IP
+  // binding.
+  decodeChangePasswordTokenOwner(token: string, ipAddress: string) {
+    const encryptionKeys =
+      this.generateChangePasswordEncryptionKeyIv(ipAddress);
+    const content = this.encryption.decrypt<ChangePasswordEncryptionPayload>(
+      token,
+      encryptionKeys.secret,
+      encryptionKeys.nounce,
+    );
+    if (!content) return undefined;
+    return { userId: content.userId, createdAt: content.createdAt };
+  }
+
   async generateChangePasswordToken(
     userId: string,
     ipAddress: string,

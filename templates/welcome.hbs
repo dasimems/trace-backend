@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+  <body style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; max-width: 480px; margin: 40px auto; color: #1a1a1a; line-height: 1.5;">
+    <h1 style="font-size: 20px; margin-bottom: 16px;">Welcome to Trace</h1>
+    <p>Hi {{firstName}},</p>
+    <p>Your Trace account is ready. You can now start tracking your money, understanding your spending patterns, and building toward your goals.</p>
+    {{#if ctaUrl}}
+      <p><a href="{{ctaUrl}}" style="display: inline-block; background: #1a1a1a; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 16px 0;">Open Trace</a></p>
+    {{/if}}
+    <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
+    <p style="color: #999; font-size: 12px;">Need help? Contact <a href="mailto:{{supportEmail}}">{{supportEmail}}</a> or call {{supportMobileNumber}}.</p>
+    <p style="color: #bbb; font-size: 12px;">&copy; {{currentYear}} Trace</p>
+  </body>
+</html>

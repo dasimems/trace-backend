@@ -64,7 +64,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     adapter,
-    { snapshot: true },
+    { snapshot: true, rawBody: true },
   );
 
   // Allow multipart so Fastify doesn't return 415. Pass payload through for
@@ -186,7 +186,19 @@ async function bootstrap() {
       .setTitle('Trace')
       .setDescription('Trace API documentation')
       .setVersion(version)
-      .addTag('trace')
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          in: 'header',
+          name: 'Authorization',
+          description:
+            'Paste the access token returned by /auth/sign-up or /auth/sign-in.',
+        },
+        'access-token',
+      )
+      .addTag('Auth', 'Sign-up, sign-in, and virtual account onboarding')
       .build();
     const documentFactory = () => SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('docs', app, documentFactory);

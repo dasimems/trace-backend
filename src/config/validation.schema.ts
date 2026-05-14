@@ -21,6 +21,13 @@ import {
   SENDGRID_API_KEY,
   SENDGRID_SENDER_EMAIL,
   SENDGRID_SENDER_NAME,
+  ANTHROPIC_API_KEY,
+  ANTHROPIC_MODEL,
+  APPLE_CLIENT_ID,
+  GOOGLE_CLIENT_ID,
+  SQUAD_BASE_URL,
+  SQUAD_BENEFICIARY_ACCOUNT,
+  SQUAD_SECRET_KEY,
   SUPPORT_EMAIL,
   SUPPORT_MOBILE_NUMBER,
 } from '../shared/constants';
@@ -181,4 +188,50 @@ export const validationSchema = Joi.object({
       'string.pattern.base': `${SUPPORT_MOBILE_NUMBER} must be in E.164 format, e.g., +1234567890`,
       'any.required': `${SUPPORT_MOBILE_NUMBER} is required`,
     }),
+  [SQUAD_SECRET_KEY]: Joi.string()
+    .required()
+    .label(SQUAD_SECRET_KEY)
+    .messages({
+      'any.required': `${SQUAD_SECRET_KEY} is required.`,
+    }),
+  [SQUAD_BASE_URL]: Joi.string()
+    .uri({ scheme: ['https'] })
+    .default('https://sandbox-api-d.squadco.com')
+    .label(SQUAD_BASE_URL)
+    .messages({
+      'string.uri': `${SQUAD_BASE_URL} must be an https URL (e.g. https://sandbox-api-d.squadco.com or https://api-d.squadco.com).`,
+    }),
+  [SQUAD_BENEFICIARY_ACCOUNT]: Joi.string()
+    .length(10)
+    .pattern(/^\d{10}$/)
+    .optional()
+    .allow('')
+    .label(SQUAD_BENEFICIARY_ACCOUNT)
+    .messages({
+      'string.pattern.base': `${SQUAD_BENEFICIARY_ACCOUNT} must be a 10-digit GTBank account number.`,
+      'string.length': `${SQUAD_BENEFICIARY_ACCOUNT} must be exactly 10 digits.`,
+    }),
+  [ANTHROPIC_API_KEY]: Joi.string()
+    .optional()
+    .allow('')
+    .label(ANTHROPIC_API_KEY)
+    .messages({
+      // Optional — if missing, the insights module falls back to deterministic
+      // narrative copy. Set this to enable Claude-generated summaries and
+      // recommendation phrasing.
+    }),
+  [ANTHROPIC_MODEL]: Joi.string()
+    .default('claude-sonnet-4-6')
+    .label(ANTHROPIC_MODEL),
+  // OAuth client IDs are the `aud` claim on ID tokens from each provider.
+  // Both optional — if missing, the corresponding /auth/oauth/<provider>
+  // endpoint returns 503 instead of crashing.
+  [GOOGLE_CLIENT_ID]: Joi.string()
+    .optional()
+    .allow('')
+    .label(GOOGLE_CLIENT_ID),
+  [APPLE_CLIENT_ID]: Joi.string()
+    .optional()
+    .allow('')
+    .label(APPLE_CLIENT_ID),
 });

@@ -11,3 +11,389 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+model Users {
+  id                         String         @id @default(uuid()) @db.Uuid
+  email                      String         @unique @map("email")
+  password                   String         @map("password")
+  isEmailVerified            Boolean        @default(false) @map("is_email_verified")
+  isPhoneNumberVerified      Boolean        @default(false) @map("is_phone_number_verified")
+  isAccountCreationCompleted Boolean        @default(false) @map("is_account_creation_completed")
+  emailVerifiedAt            DateTime?      @map("email_verified_at")
+  phoneNumberVerifiedAt      DateTime?      @map("phone_number_verified_at")
+  createdAt                  DateTime       @default(now()) @map("created_at")
+  updatedAt                  DateTime       @updatedAt @map("updated_at")
+  firstName                  String?        @map("first_name")
+  lastName                   String?        @map("last_name")
+  middleName                 String?        @map("middle_name")
+  dateOfBirth                DateTime?      @map("date_of_birth")
+  bvn                        String?        @unique @map("bvn") @db.VarChar(11)
+  nin                        String?        @unique @map("nin") @db.VarChar(11)
+  phoneNumber                String?        @unique @map("phone_number") @db.VarChar(15)
+  category                   CategoryEnum?  @map("profession")
+  address                    String?        @map("address")
+  gender                     GenderEnum?    @map("gender")
+  role                       RoleEnum       @default(USER) @map("role")
+  bankAccounts               BankAccounts[]
+  transactions               Transactions[]
+  walletPockets              WalletPockets[]
+  loanApplications           LoanApplications[]
+  investmentAllocations      InvestmentAllocations[]
+  savedOpportunities         SavedOpportunities[]
+  copilotMessages            CopilotMessages[]
+
+  @@map("users")
+}
+
+enum GenderEnum {
+  MALE
+  FEMALE
+}
+
+enum CategoryEnum {
+  TRADER
+  FREELANCER
+  EMPLOYEE
+  STUDENT
+  SMALL_BUSINESS_OWNER
+}
+
+enum RoleEnum {
+  ADMIN
+  USER
+}
+
+enum BankAccountProviderEnum {
+  SQUAD
+}
+
+enum TransactionDirectionEnum {
+  CREDIT
+  DEBIT
+}
+
+enum TransactionStatusEnum {
+  PENDING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+enum TransactionCategoryEnum {
+  INCOME
+  TRANSFER
+  FOOD_AND_DINING
+  TRANSPORT
+  BILLS_AND_UTILITIES
+  SHOPPING
+  ENTERTAINMENT
+  HEALTH
+  EDUCATION
+  SAVINGS
+  INVESTMENT
+  FEES
+  OTHER
+}
+
+model BankAccounts {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  accountNumber        String                  @unique @map("account_number") @db.VarChar(10)
+  accountName          String                  @map("account_name")
+  bankCode             String                  @map("bank_code")
+  customerIdentifier   String                  @unique @map("customer_identifier")
+  beneficiaryAccount   String?                 @map("beneficiary_account") @db.VarChar(10)
+  provider             BankAccountProviderEnum @default(SQUAD) @map("provider")
+  balance              Int                     @default(0) @map("balance")
+  createdAt            DateTime                @default(now()) @map("created_at")
+  updatedAt            DateTime                @updatedAt @map("updated_at")
+  userId               String                  @map("user_id") @db.Uuid
+
+  user         Users          @relation(fields: [userId], references: [id])
+  transactions Transactions[]
+  pockets      WalletPockets[]
+
+  @@map("bank_accounts")
+}
+
+model Transactions {
+  id               String                   @id @default(uuid()) @db.Uuid
+  reference        String                   @unique @map("reference")
+  providerReference String?                 @unique @map("provider_reference")
+  direction        TransactionDirectionEnum @map("direction")
+  status           TransactionStatusEnum    @default(PENDING) @map("status")
+  category         TransactionCategoryEnum  @default(OTHER) @map("category")
+  description      String?                  @map("description")
+  // Amounts in kobo. `amount` is what hits the user's balance.
+  amount           Int                      @map("amount")
+  fee              Int                      @default(0) @map("fee")
+  principalAmount  Int?                     @map("principal_amount")
+  settledAmount    Int?                     @map("settled_amount")
+  currency         String                   @default("NGN") @map("currency") @db.VarChar(3)
+  // Counterparty: filled differently for inbound (sender_*) vs outbound (recipient_*).
+  senderName            String? @map("sender_name")
+  senderAccountNumber   String? @map("sender_account_number") @db.VarChar(20)
+  senderBankCode        String? @map("sender_bank_code")
+  senderBankName        String? @map("sender_bank_name")
+  recipientName         String? @map("recipient_name")
+  recipientAccountNumber String? @map("recipient_account_number") @db.VarChar(20)
+  recipientBankCode     String? @map("recipient_bank_code")
+  recipientBankName     String? @map("recipient_bank_name")
+  remark                String? @map("remark")
+  provider              BankAccountProviderEnum @default(SQUAD) @map("provider")
+  metadata              Json?                    @map("metadata")
+  processedAt           DateTime?                @map("processed_at")
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+
+  accountId String @map("account_id") @db.Uuid
+  userId    String @map("user_id") @db.Uuid
+
+  user         Users        @relation(fields: [userId], references: [id])
+  bankAccounts BankAccounts @relation(fields: [accountId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([direction, status])
+  @@map("transactions")
+}
+
+// ─── Wallet pockets ────────────────────────────────────────────────────────
+// Internal-only sub-balances. The user's primary account balance is the
+// authoritative number for Squad; pockets are an opinionated allocation of
+// that balance into named buckets ("Spend", "Save", "Goals · Lagos store").
+// The SUM of pocket balances should never exceed account.balance — enforced
+// by application code; Postgres has no easy way to express this constraint.
+
+enum WalletPocketTypeEnum {
+  SPEND
+  SAVE
+  GOAL
+}
+
+model WalletPockets {
+  id          String               @id @default(uuid()) @db.Uuid
+  name        String               @map("name")
+  type        WalletPocketTypeEnum @map("type")
+  balance     Int                  @default(0) @map("balance")
+  targetAmount Int?                @map("target_amount")
+  // Soft-locks the default Spend pocket so the user can't delete it.
+  isDefault   Boolean              @default(false) @map("is_default")
+  accountId   String               @map("account_id") @db.Uuid
+  userId      String               @map("user_id") @db.Uuid
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  user        Users        @relation(fields: [userId], references: [id])
+  bankAccount BankAccounts @relation(fields: [accountId], references: [id])
+
+  @@index([userId])
+  @@map("wallet_pockets")
+}
+
+// ─── Loans ────────────────────────────────────────────────────────────────
+
+enum LoanProductTypeEnum {
+  PERSONAL
+  SALARY_ADVANCE
+  BUSINESS
+  EMERGENCY
+}
+
+enum LoanTierEnum {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum LoanApplicationStatusEnum {
+  PENDING
+  APPROVED
+  REJECTED
+  DISBURSED
+  REPAID
+  DEFAULTED
+}
+
+model LoanProducts {
+  id                String              @id @default(uuid()) @db.Uuid
+  name              String              @map("name")
+  provider          String              @map("provider")
+  type              LoanProductTypeEnum @map("type")
+  // Annual interest rate as basis points (e.g. 2400 = 24%). Integer math
+  // beats Float for currency.
+  interestRateBps   Int                 @map("interest_rate_bps")
+  minAmount         Int                 @map("min_amount") // kobo
+  maxAmount         Int                 @map("max_amount") // kobo
+  minTenorDays      Int                 @map("min_tenor_days")
+  maxTenorDays      Int                 @map("max_tenor_days")
+  requiredTier      LoanTierEnum        @map("required_tier")
+  description       String              @map("description")
+  // Active products show up in /loans/products; inactive don't, but past
+  // applications can still reference them.
+  isActive          Boolean             @default(true) @map("is_active")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  applications      LoanApplications[]
+
+  @@map("loan_products")
+}
+
+model LoanApplications {
+  id              String                    @id @default(uuid()) @db.Uuid
+  productId       String                    @map("product_id") @db.Uuid
+  userId          String                    @map("user_id") @db.Uuid
+  requestedAmount Int                       @map("requested_amount") // kobo
+  approvedAmount  Int?                      @map("approved_amount")
+  tenorDays       Int                       @map("tenor_days")
+  status          LoanApplicationStatusEnum @default(PENDING) @map("status")
+  rejectionReason String?                   @map("rejection_reason")
+  decisionedAt    DateTime?                 @map("decisioned_at")
+  disbursedAt     DateTime?                 @map("disbursed_at")
+  dueAt           DateTime?                 @map("due_at")
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  updatedAt       DateTime                  @updatedAt @map("updated_at")
+
+  product LoanProducts @relation(fields: [productId], references: [id])
+  user    Users        @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("loan_applications")
+}
+
+// ─── Investments ──────────────────────────────────────────────────────────
+
+enum InvestmentProductTypeEnum {
+  MONEY_MARKET
+  TREASURY_BILL
+  BOND
+  COOPERATIVE
+  ETF
+  FIXED_DEPOSIT
+}
+
+enum RiskLevelEnum {
+  LOW
+  LOW_MEDIUM
+  MEDIUM
+  MEDIUM_HIGH
+  HIGH
+}
+
+enum InvestmentAllocationStatusEnum {
+  PENDING
+  ACTIVE
+  WITHDRAWN
+}
+
+model InvestmentProducts {
+  id                     String                    @id @default(uuid()) @db.Uuid
+  name                   String                    @map("name")
+  provider               String                    @map("provider")
+  type                   InvestmentProductTypeEnum @map("type")
+  // Expected annual return as basis points (e.g. 1320 = 13.2%).
+  expectedReturnBps      Int                       @map("expected_return_bps")
+  riskLevel              RiskLevelEnum             @map("risk_level")
+  minAmount              Int                       @map("min_amount") // kobo
+  // Null = open-ended (no lock-up).
+  tenorDays              Int?                      @map("tenor_days")
+  description            String                    @map("description")
+  isActive               Boolean                   @default(true) @map("is_active")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  updatedAt              DateTime                  @updatedAt @map("updated_at")
+
+  allocations InvestmentAllocations[]
+
+  @@map("investment_products")
+}
+
+model InvestmentAllocations {
+  id              String                         @id @default(uuid()) @db.Uuid
+  productId       String                         @map("product_id") @db.Uuid
+  userId          String                         @map("user_id") @db.Uuid
+  amount          Int                            @map("amount") // kobo at allocation time
+  currentValue    Int                            @map("current_value") // kobo (updated when yields are credited)
+  status          InvestmentAllocationStatusEnum @default(PENDING) @map("status")
+  allocatedAt     DateTime?                      @map("allocated_at")
+  withdrawnAt     DateTime?                      @map("withdrawn_at")
+  maturesAt       DateTime?                      @map("matures_at")
+  createdAt       DateTime                       @default(now()) @map("created_at")
+  updatedAt       DateTime                       @updatedAt @map("updated_at")
+
+  product InvestmentProducts @relation(fields: [productId], references: [id])
+  user    Users              @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("investment_allocations")
+}
+
+// ─── Opportunities ────────────────────────────────────────────────────────
+// Loans and investments are surfaced through the opportunities marketplace
+// via derived views, but grants/partnerships are first-class rows because
+// they don't map onto either.
+
+enum OpportunityKindEnum {
+  GRANT
+  PARTNERSHIP
+}
+
+model Grants {
+  id              String              @id @default(uuid()) @db.Uuid
+  kind            OpportunityKindEnum @map("kind")
+  title           String              @map("title")
+  provider        String              @map("provider")
+  description     String              @map("description")
+  awardAmount     Int                 @map("award_amount") // kobo (max)
+  deadline        DateTime?           @map("deadline")
+  eligibility     String              @map("eligibility")
+  applicationUrl  String?             @map("application_url")
+  isActive        Boolean             @default(true) @map("is_active")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  @@map("grants")
+}
+
+// Discriminator that maps to one of LoanProducts / InvestmentProducts /
+// Grants. The composite (kind, opportunityId) is the user-facing primary key
+// the frontend uses to look up details.
+enum OpportunitySourceEnum {
+  LOAN
+  INVESTMENT
+  GRANT
+}
+
+model SavedOpportunities {
+  id            String                @id @default(uuid()) @db.Uuid
+  userId        String                @map("user_id") @db.Uuid
+  source        OpportunitySourceEnum @map("source")
+  opportunityId String                @map("opportunity_id") @db.Uuid
+  savedAt       DateTime              @default(now()) @map("saved_at")
+
+  user Users @relation(fields: [userId], references: [id])
+
+  @@unique([userId, source, opportunityId])
+  @@index([userId])
+  @@map("saved_opportunities")
+}
+
+// ─── Copilot ──────────────────────────────────────────────────────────────
+
+enum CopilotRoleEnum {
+  USER
+  ASSISTANT
+}
+
+model CopilotMessages {
+  id        String          @id @default(uuid()) @db.Uuid
+  userId    String          @map("user_id") @db.Uuid
+  role      CopilotRoleEnum @map("role")
+  content   String          @map("content")
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  user Users @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("copilot_messages")
+}
