@@ -109,13 +109,6 @@ export class EmailService {
     );
   }
 
-  async sendMagicLinkEmail(to: string, magicLinkUrl: string) {
-    if (!to) return;
-    return this.sendMail(to, 'Your login link', 'magic-link-login', {
-      magicLinkUrl,
-    });
-  }
-
   async sendPasswordChangedEmail(to: string, name: string) {
     if (!to) return;
     return this.sendMail(to, 'Your password was changed', 'password-changed', {

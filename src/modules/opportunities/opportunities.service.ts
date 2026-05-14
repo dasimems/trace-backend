@@ -12,6 +12,10 @@ import {
   LoanTierEnum,
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import {
+  RationaleProduct,
+  RationaleService,
+} from '@common/insights/rationale.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -30,7 +34,10 @@ const TIER_ORDER: Record<LoanTierEnum, number> = {
 
 @Injectable()
 export class OpportunitiesService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly rationaleService: RationaleService,
+  ) {}
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -106,6 +113,52 @@ export class OpportunitiesService {
     for (const g of grants) {
       const opp = this.grantToOpportunity(g, savedSet);
       if (filter(opp)) opportunities.push(opp);
+    }
+
+    // One batched Claude call covering all opportunities for this user. The
+    // rationale is the "why we picked this for you" sentence on each card.
+    const rationaleProducts: RationaleProduct[] = [
+      ...loans.map(
+        (l): RationaleProduct => ({
+          id: l.id,
+          type: 'loan',
+          name: l.name,
+          tier: l.requiredTier,
+          rateBps: l.interestRateBps,
+          maxAmount: l.maxAmount,
+          tenor: `${l.minTenorDays}–${l.maxTenorDays} days`,
+        }),
+      ),
+      ...investments.map(
+        (i): RationaleProduct => ({
+          id: i.id,
+          type: 'investment',
+          name: i.name,
+          yieldBps: i.expectedReturnBps,
+          risk: i.riskLevel,
+          min: i.minAmount,
+        }),
+      ),
+      ...grants.map(
+        (g): RationaleProduct => ({
+          id: g.id,
+          type: 'grant',
+          name: g.title,
+          awardAmount: g.awardAmount,
+          eligibility: g.eligibility,
+        }),
+      ),
+    ];
+    const rationales = await this.rationaleService.generateForUser(
+      auth.id,
+      rationaleProducts,
+    );
+    for (const opp of opportunities) {
+      // OpportunityDTO.id is "<source>:<uuid>" — strip the prefix to match
+      // the rationale keys (which are raw product UUIDs).
+      const rawId = opp.id.split(':')[1] ?? opp.id;
+      const rationale = rationales.get(rawId);
+      if (rationale) opp.aiRationale = rationale;
     }
 
     opportunities.sort((a, b) => b.matchPercent - a.matchPercent);

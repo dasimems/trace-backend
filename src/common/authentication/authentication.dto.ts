@@ -23,15 +23,3 @@ export interface AuthUserDetails {
 export interface CustomRequest extends FastifyRequest {
   auth?: AuthenticationDataDTO;
 }
-
-export interface MagicLinkEncryptionDataDTO {
-  data: string;
-}
-
-export interface MagicLinkData {
-  email: string | undefined;
-  createdAt: Date | undefined;
-  id: string;
-  isEmailVerified: boolean | undefined;
-  role: string | undefined;
-}

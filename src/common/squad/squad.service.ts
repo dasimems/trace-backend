@@ -4,6 +4,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -26,12 +27,15 @@ import {
 @Injectable()
 export class SquadService {
   private readonly logger = new Logger(SquadService.name);
-  private readonly secretKey: string;
+  private readonly secretKey?: string;
   private readonly baseUrl: string;
   private readonly defaultBeneficiaryAccount?: string;
+  private readonly enabled: boolean;
 
   constructor(private readonly configService: ConfigService) {
-    this.secretKey = this.configService.get<string>(SQUAD_SECRET_KEY)!;
+    const key = this.configService.get<string>(SQUAD_SECRET_KEY);
+    this.secretKey = key && key.trim() !== '' ? key : undefined;
+    this.enabled = !!this.secretKey;
     this.baseUrl = this.configService
       .get<string>(SQUAD_BASE_URL)!
       .replace(/\/$/, '');
@@ -39,6 +43,10 @@ export class SquadService {
       SQUAD_BENEFICIARY_ACCOUNT,
     );
     this.defaultBeneficiaryAccount = beneficiary || undefined;
+  }
+
+  isEnabled() {
+    return this.enabled;
   }
 
   getDefaultBeneficiaryAccount() {
@@ -50,6 +58,11 @@ export class SquadService {
     path: string,
     body?: unknown,
   ): Promise<SquadApiResponse<T>> {
+    if (!this.enabled || !this.secretKey) {
+      throw new ServiceUnavailableException(
+        'Squad integration is not configured (SQUAD_SECRET_KEY missing). Set the env var to enable virtual accounts and transfers.',
+      );
+    }
     const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
     let response: Response;
     try {

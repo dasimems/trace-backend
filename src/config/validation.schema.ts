@@ -189,10 +189,13 @@ export const validationSchema = Joi.object({
       'any.required': `${SUPPORT_MOBILE_NUMBER} is required`,
     }),
   [SQUAD_SECRET_KEY]: Joi.string()
-    .required()
+    .optional()
+    .allow('')
     .label(SQUAD_SECRET_KEY)
     .messages({
-      'any.required': `${SQUAD_SECRET_KEY} is required.`,
+      // Optional — when blank, /auth/account (Squad virtual account creation)
+      // and /wallet/transfer return 503 instead of crashing. Other endpoints
+      // (insights, copilot, dev seeder) keep working.
     }),
   [SQUAD_BASE_URL]: Joi.string()
     .uri({ scheme: ['https'] })

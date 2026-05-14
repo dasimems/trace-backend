@@ -13,7 +13,6 @@ export enum NodeEnv {
 }
 
 export enum AuthType {
-  MAGIC_LINK = 'MAGIC_LINK',
   PASSWORD = 'PASSWORD',
   SOCIAL_LOGIN = 'SOCIAL_LOGIN',
 }

@@ -62,4 +62,12 @@ export class OpportunityDTO {
     description: 'True if the user has saved this opportunity.',
   })
   isSaved: boolean;
+
+  @ApiProperty({
+    type: String,
+    required: false,
+    description:
+      'Personalized one-sentence rationale for THIS user (Claude-generated).',
+  })
+  aiRationale?: string;
 }

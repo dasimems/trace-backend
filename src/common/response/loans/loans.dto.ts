@@ -44,6 +44,14 @@ export class LoanProductDTO {
 
   @ApiProperty({ type: Boolean, description: 'True if the user qualifies for this product' })
   eligible: boolean;
+
+  @ApiProperty({
+    type: String,
+    required: false,
+    description:
+      'Personalized one-sentence rationale for THIS user (Claude-generated). Absent when ANTHROPIC_API_KEY is unset.',
+  })
+  aiRationale?: string;
 }
 
 export class LoanTierResponseDTO {

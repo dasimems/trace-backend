@@ -39,6 +39,14 @@ export class InvestmentProductDTO {
 
   @ApiProperty({ type: String })
   description: string;
+
+  @ApiProperty({
+    type: String,
+    required: false,
+    description:
+      'Personalized one-sentence rationale for THIS user (Claude-generated).',
+  })
+  aiRationale?: string;
 }
 
 export class InvestmentAllocationDTO {

@@ -6,9 +6,39 @@ export interface AnthropicTextBlock {
   cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
 }
 
+export interface AnthropicToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface AnthropicToolResultBlock {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+export type AnthropicContentBlock =
+  | AnthropicTextBlock
+  | AnthropicToolUseBlock
+  | AnthropicToolResultBlock;
+
 export interface AnthropicMessage {
   role: 'user' | 'assistant';
-  content: string | AnthropicTextBlock[];
+  content: string | AnthropicContentBlock[];
+}
+
+// JSON-schema-shaped tool definition matching Claude's API.
+export interface AnthropicTool {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
 }
 
 export interface AnthropicCreateMessagePayload {
@@ -17,6 +47,7 @@ export interface AnthropicCreateMessagePayload {
   system?: AnthropicTextBlock[];
   messages: AnthropicMessage[];
   temperature?: number;
+  tools?: AnthropicTool[];
 }
 
 export interface AnthropicUsage {
@@ -26,12 +57,17 @@ export interface AnthropicUsage {
   cache_read_input_tokens?: number;
 }
 
+export type AnthropicResponseBlock =
+  | { type: 'text'; text: string }
+  | AnthropicToolUseBlock
+  | { type: string; [key: string]: unknown };
+
 export interface AnthropicResponse {
   id: string;
   type: 'message';
   role: 'assistant';
   model: string;
-  content: Array<{ type: 'text'; text: string } | { type: string; [key: string]: unknown }>;
-  stop_reason: string;
+  content: AnthropicResponseBlock[];
+  stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | string;
   usage: AnthropicUsage;
 }

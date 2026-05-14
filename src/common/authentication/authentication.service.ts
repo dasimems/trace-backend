@@ -9,8 +9,6 @@ import {
   AuthenticationDataDTO,
   AuthUserDetails,
   CustomRequest,
-  MagicLinkData,
-  MagicLinkEncryptionDataDTO,
 } from './authentication.dto';
 import { JwtService } from '../jwt/jwt.service';
 import {
@@ -20,7 +18,6 @@ import {
 } from '../../shared/constants';
 import { UrlService } from '../url/url.service';
 import Keyv from 'keyv';
-import { EncryptionService } from '@common/encryption/encryption.service';
 
 @Injectable()
 export class AuthenticationService {
@@ -28,12 +25,10 @@ export class AuthenticationService {
   private authHash: string;
   authTokenCookieKey = 'auth_token';
   tokenValidity = 7 * 24 * 60 * 60;
-  private magicTokenValidity = 10 * 60;
   constructor(
     private readonly configService: ConfigService,
     private readonly jwtService: JwtService,
     private readonly urlService: UrlService,
-    private readonly encryptionService: EncryptionService,
     @Inject(REDIS_CACHE) private readonly redisCache: Keyv,
   ) {
     this.authSecret = this.configService.get<string>(AUTH_SECRET_KEY)!;
@@ -52,14 +47,6 @@ export class AuthenticationService {
   ) {
     const userAgent = this.urlService.getUserAgent(req);
     return this.constructUniqueID(userAgent, handShakeAddress);
-  }
-
-  private constructMagicLinkTokenUniqueId(
-    userAgent: string,
-    ip: string,
-    id: string,
-  ) {
-    return `${userAgent}-${id}-${ip}`;
   }
 
   private constructUniqueIdentifier(req: CustomRequest) {
@@ -220,110 +207,4 @@ export class AuthenticationService {
     };
   }
 
-  private constructMagicLinkData(userDetails: AuthUserDetails): MagicLinkData {
-    const { email, createdAt, id, isEmailVerified, role } = userDetails;
-    return { email, createdAt, id, isEmailVerified, role };
-  }
-
-  private getMagicLinkEncryptionSecret(
-    userDetails: AuthUserDetails,
-    uniqueId: string,
-  ) {
-    const { id, email } = userDetails;
-    const secret = {
-        key: `${id}-${email}`,
-        iv: `${uniqueId}-${id}`,
-      },
-      nonce = {
-        key: `${email}-${id}`,
-        iv: `${uniqueId}-${email}`,
-      };
-    return { secret, nonce };
-  }
-
-  async constructMagicLinkToken(
-    userDetails: AuthUserDetails,
-    req: CustomRequest,
-  ) {
-    const ipAddress = this.urlService.getIpAddress(req);
-    const userAgent = this.urlService.getUserAgent(req);
-    const uniqueId = this.constructMagicLinkTokenUniqueId(
-      userAgent,
-      ipAddress,
-      userDetails?.id,
-    );
-    const iat = Math.floor(Date.now() / 1000);
-    const secreteKeyDetails = this.getMagicLinkEncryptionSecret(
-      userDetails,
-      uniqueId,
-    );
-    const magicLinkExtraData = this.constructMagicLinkData(userDetails);
-    const encryptedData = this.encryptionService.encrypt(
-      magicLinkExtraData,
-      secreteKeyDetails?.secret,
-      secreteKeyDetails?.nonce,
-    );
-    const payload: MagicLinkEncryptionDataDTO = { data: encryptedData };
-    const token = await this.jwtService.sign(
-      payload,
-      this.authSecret,
-      uniqueId,
-      iat + this.magicTokenValidity,
-    );
-
-    await this.redisCache.set(
-      encryptedData,
-      magicLinkExtraData,
-      this.magicTokenValidity * 1000,
-    );
-    return token;
-  }
-
-  async verifyMagicLinkToken(
-    userDetails: AuthUserDetails,
-    token: string,
-    req: CustomRequest,
-  ) {
-    const ipAddress = this.urlService.getIpAddress(req);
-    const userAgent = this.urlService.getUserAgent(req);
-    const uniqueId = this.constructMagicLinkTokenUniqueId(
-      userAgent,
-      ipAddress,
-      userDetails?.id,
-    );
-    const secreteKeyDetails = this.getMagicLinkEncryptionSecret(
-      userDetails,
-      uniqueId,
-    );
-    const tokenData = await this.jwtService.verify<MagicLinkEncryptionDataDTO>(
-      token,
-      this.authSecret,
-      uniqueId,
-    );
-
-    if (!tokenData) {
-      throw new UnauthorizedException('Unauthorized!');
-    }
-
-    const storedRedisCache = await this.redisCache.get<MagicLinkData>(
-      tokenData?.data,
-    );
-
-    if (!storedRedisCache) {
-      throw new UnauthorizedException('Unauthorized!');
-    }
-
-    const encryptedData = this.encryptionService.encrypt(
-      storedRedisCache,
-      secreteKeyDetails?.secret,
-      secreteKeyDetails?.nonce,
-    );
-
-    if (encryptedData !== tokenData?.data) {
-      throw new UnauthorizedException('Unauthorized!');
-    }
-    await this.redisCache.delete(tokenData?.data);
-
-    return userDetails;
-  }
 }

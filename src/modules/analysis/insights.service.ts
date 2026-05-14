@@ -33,6 +33,7 @@ import {
 import { REDIS_CACHE } from '@shared/constants';
 import { detectAnomalies } from '@common/scoring/anomaly-detection';
 import { computeFinancialHealth } from '@common/scoring/financial-health';
+import { deriveLoanTier } from '@common/scoring/loan-tier';
 import { detectRecurring } from '@common/scoring/recurring-detection';
 import {
   RecommendationCandidate,
@@ -240,10 +241,22 @@ export class InsightsService {
     balance: number,
   ): Promise<RecommendationsResponseDTO> {
     const health = computeFinancialHealth(transactions, balance);
+    const loanTier = deriveLoanTier(health);
+    // Pull the active catalogs so the engine can recommend specific products
+    // ("Move ₦25k into MMF") rather than generic copy ("invest somewhere").
+    const [loanProducts, investmentProducts] = await Promise.all([
+      this.prismaService.loanProducts.findMany({ where: { isActive: true } }),
+      this.prismaService.investmentProducts.findMany({
+        where: { isActive: true },
+      }),
+    ]);
     const candidates = generateRecommendations({
       transactions,
       currentBalance: balance,
       health,
+      loanTier,
+      loanProducts,
+      investmentProducts,
     });
     if (candidates.length === 0) {
       return { recommendations: [], aiGenerated: false };

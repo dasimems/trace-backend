@@ -10,6 +10,10 @@ import {
   TransactionStatusEnum,
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import {
+  RationaleProduct,
+  RationaleService,
+} from '@common/insights/rationale.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -26,7 +30,10 @@ import { AllocateBodyDTO, GetAllocationsQueryDTO } from './investments.dto';
 
 @Injectable()
 export class InvestmentsService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly rationaleService: RationaleService,
+  ) {}
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -34,11 +41,27 @@ export class InvestmentsService {
     return auth;
   }
 
-  async listProducts() {
+  // listProducts now needs the user to fetch personalised rationales. We
+  // accept an unauthenticated call too (returns products without rationale).
+  async listProducts(req?: CustomRequest) {
     const products = await this.prismaService.investmentProducts.findMany({
       where: { isActive: true },
       orderBy: { expectedReturnBps: 'desc' },
     });
+    const rationaleProducts: RationaleProduct[] = products.map((p) => ({
+      id: p.id,
+      type: 'investment',
+      name: p.name,
+      yieldBps: p.expectedReturnBps,
+      risk: p.riskLevel,
+      min: p.minAmount,
+    }));
+    const rationales = req?.auth
+      ? await this.rationaleService.generateForUser(
+          req.auth.id,
+          rationaleProducts,
+        )
+      : new Map<string, string>();
     const response: InvestmentProductDTO[] = products.map((p) => ({
       id: p.id,
       name: p.name,
@@ -49,6 +72,7 @@ export class InvestmentsService {
       minAmount: p.minAmount,
       tenorDays: p.tenorDays ?? undefined,
       description: p.description,
+      aiRationale: rationales.get(p.id),
     }));
     return new BaseResponse(response);
   }

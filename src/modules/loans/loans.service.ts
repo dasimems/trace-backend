@@ -13,6 +13,10 @@ import {
   TransactionStatusEnum,
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import {
+  RationaleProduct,
+  RationaleService,
+} from '@common/insights/rationale.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -40,7 +44,10 @@ const TIER_ORDER: Record<LoanTierEnum, number> = {
 
 @Injectable()
 export class LoansService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly rationaleService: RationaleService,
+  ) {}
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -87,6 +94,21 @@ export class LoansService {
       orderBy: { interestRateBps: 'asc' },
     });
     const userTierRank = TIER_ORDER[tier.tier];
+
+    const rationaleProducts: RationaleProduct[] = products.map((p) => ({
+      id: p.id,
+      type: 'loan',
+      name: p.name,
+      tier: p.requiredTier,
+      rateBps: p.interestRateBps,
+      maxAmount: p.maxAmount,
+      tenor: `${p.minTenorDays}–${p.maxTenorDays} days`,
+    }));
+    const rationales = await this.rationaleService.generateForUser(
+      auth.id,
+      rationaleProducts,
+    );
+
     const response: LoanProductDTO[] = products.map((p) => ({
       id: p.id,
       name: p.name,
@@ -102,6 +124,7 @@ export class LoansService {
       eligible:
         tier.status === 'ok' &&
         TIER_ORDER[p.requiredTier] <= userTierRank,
+      aiRationale: rationales.get(p.id),
     }));
     return new BaseResponse(response);
   }

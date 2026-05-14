@@ -5,10 +5,13 @@ import {
   ANTHROPIC_MODEL,
 } from '../../shared/constants';
 import {
+  AnthropicContentBlock,
   AnthropicCreateMessagePayload,
   AnthropicMessage,
   AnthropicResponse,
   AnthropicTextBlock,
+  AnthropicTool,
+  AnthropicToolUseBlock,
 } from './anthropic.dto';
 
 interface GenerateOptions {
@@ -172,6 +175,156 @@ export class AnthropicService {
       (block): block is { type: 'text'; text: string } => block.type === 'text',
     );
     return textBlock?.text ?? null;
+  }
+
+  // Tool-use loop. Sends messages + tools to Claude, executes any tool_use
+  // blocks via the caller-provided handler, feeds the results back, and
+  // repeats until Claude finishes (stop_reason=end_turn) or hits the
+  // iteration cap.
+  //
+  // Caller responsibility: the handler must be idempotent and quick — every
+  // tool call adds one Claude round-trip plus its own latency. Errors thrown
+  // by the handler are surfaced to Claude as is_error tool_result blocks so
+  // the model can recover (e.g. ask for clarification).
+  async runTools(options: {
+    systemBlocks: string[];
+    messages: AnthropicMessage[];
+    tools: AnthropicTool[];
+    handler: (
+      name: string,
+      input: Record<string, unknown>,
+    ) => Promise<unknown>;
+    maxIterations?: number;
+    maxTokens?: number;
+    cacheFirstSystemBlock?: boolean;
+  }): Promise<{
+    finalText: string | null;
+    transcript: AnthropicMessage[];
+  }> {
+    if (!this.enabled || !this.apiKey) {
+      return { finalText: null, transcript: options.messages };
+    }
+    const {
+      systemBlocks,
+      tools,
+      handler,
+      maxIterations = 6,
+      maxTokens = 1024,
+      cacheFirstSystemBlock = true,
+    } = options;
+
+    const system: AnthropicTextBlock[] = systemBlocks.map((text, index) => ({
+      type: 'text',
+      text,
+      ...(cacheFirstSystemBlock && index === 0
+        ? { cache_control: { type: 'ephemeral' as const } }
+        : {}),
+    }));
+
+    let messages: AnthropicMessage[] = [...options.messages];
+
+    for (let iter = 0; iter < maxIterations; iter++) {
+      const payload: AnthropicCreateMessagePayload = {
+        model: this.model,
+        max_tokens: maxTokens,
+        system,
+        messages,
+        tools,
+      };
+
+      let response: Response;
+      try {
+        response = await fetch(`${this.baseUrl}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'x-api-key': this.apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            accept: 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        this.logger.error(
+          `Anthropic tools request failed: ${(error as Error).message}`,
+        );
+        return { finalText: null, transcript: messages };
+      }
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        this.logger.warn(
+          `Anthropic tools returned ${response.status}: ${body.slice(0, 500)}`,
+        );
+        return { finalText: null, transcript: messages };
+      }
+      const parsed = (await response.json()) as AnthropicResponse;
+      if (parsed.usage) {
+        this.logger.debug(
+          `Anthropic tools iter=${iter} in=${parsed.usage.input_tokens} out=${parsed.usage.output_tokens} cache_read=${parsed.usage.cache_read_input_tokens ?? 0}`,
+        );
+      }
+
+      // Always append the assistant turn — must preserve tool_use blocks
+      // for the next iteration's context.
+      messages = [
+        ...messages,
+        {
+          role: 'assistant',
+          content: parsed.content as AnthropicContentBlock[],
+        },
+      ];
+
+      if (parsed.stop_reason !== 'tool_use') {
+        const textBlock = parsed.content.find(
+          (b): b is { type: 'text'; text: string } => b.type === 'text',
+        );
+        return { finalText: textBlock?.text ?? null, transcript: messages };
+      }
+
+      const toolUses = parsed.content.filter(
+        (b): b is AnthropicToolUseBlock => b.type === 'tool_use',
+      );
+      if (toolUses.length === 0) {
+        // stop_reason said tool_use but no blocks? bail safely.
+        return { finalText: null, transcript: messages };
+      }
+
+      // Execute every requested tool, collect tool_result blocks.
+      const toolResults: AnthropicContentBlock[] = [];
+      for (const call of toolUses) {
+        try {
+          const result = await handler(call.name, call.input);
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: call.id,
+            content:
+              typeof result === 'string' ? result : JSON.stringify(result),
+          });
+        } catch (error) {
+          this.logger.warn(
+            `Tool ${call.name} threw: ${(error as Error).message}`,
+          );
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: call.id,
+            content: (error as Error).message || 'Tool execution failed.',
+            is_error: true,
+          });
+        }
+      }
+      messages = [
+        ...messages,
+        { role: 'user', content: toolResults },
+      ];
+    }
+
+    // Hit iteration cap without an end_turn — return what we have. The
+    // model exhausted its budget exploring; surface gracefully.
+    this.logger.warn(
+      `Anthropic tools loop hit maxIterations=${maxIterations}`,
+    );
+    return { finalText: null, transcript: messages };
   }
 
   // Convenience wrapper: prompt Claude to return JSON and parse it. Returns

@@ -9,6 +9,7 @@ import { AllExceptionsFilter } from '@common/exceptions/all-exceptions.filter';
 import { AnthropicModule } from '@common/anthropic/anthropic.module';
 import { AuthenticationModule } from '@common/authentication/authentication.module';
 import { EventBusModule } from '@common/events/event-bus.module';
+import { InsightsCommonModule } from '@common/insights/insights.module';
 import { CacheModule } from '@common/cache/cache.module';
 import { CloudinaryModule } from '@common/cloudinary/cloudinary.module';
 import { EmailModule } from '@common/email/email.module';
@@ -56,6 +57,7 @@ import { WebhooksModule } from '@modules/webhooks/webhooks.module';
     AuthenticationModule,
     CacheModule,
     EventBusModule,
+    InsightsCommonModule,
     CloudinaryModule,
     EmailModule,
     EncryptionModule,

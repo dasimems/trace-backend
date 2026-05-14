@@ -36,8 +36,8 @@ export class InvestmentsController {
   @HttpCode(200)
   @ApiOperation({ summary: 'List active investment products' })
   @ApiOkResponseData(InvestmentProductDTO, { isArray: true })
-  listProducts() {
-    return this.investmentsService.listProducts();
+  listProducts(@Req() req: CustomRequest) {
+    return this.investmentsService.listProducts(req);
   }
 
   @Get(subRoutes.portfolio)

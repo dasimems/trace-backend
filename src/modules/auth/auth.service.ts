@@ -51,14 +51,20 @@ export class AuthService {
   private getUserDetailsByEmail(email: string) {
     return this.prismaService.users.findUnique({
       where: { email },
-      select: { ...UserDetailsSelect, bankAccounts: { select: BankAccountSelect } },
+      select: {
+        ...UserDetailsSelect,
+        bankAccounts: { select: BankAccountSelect },
+      },
     });
   }
 
   private getUserDetailsById(id: string) {
     return this.prismaService.users.findUnique({
       where: { id },
-      select: { ...UserDetailsSelect, bankAccounts: { select: BankAccountSelect } },
+      select: {
+        ...UserDetailsSelect,
+        bankAccounts: { select: BankAccountSelect },
+      },
     });
   }
 
@@ -106,7 +112,10 @@ export class AuthService {
         password: hashedPassword,
         createdAt,
       },
-      select: { ...UserDetailsSelect, bankAccounts: { select: BankAccountSelect } },
+      select: {
+        ...UserDetailsSelect,
+        bankAccounts: { select: BankAccountSelect },
+      },
     });
 
     const accessToken = await this.authenticationService.generateAuthToken(
@@ -196,28 +205,28 @@ export class AuthService {
     const customerIdentifier = `trace_${userDetails.id.replace(/-/g, '').slice(0, 16)}`;
     const beneficiaryAccount = this.squadService.getDefaultBeneficiaryAccount();
 
-    const virtualAccount = await this.squadService.createIndividualVirtualAccount({
-      first_name: body.firstName,
-      last_name: body.lastName,
-      middle_name: body.middleName,
-      mobile_num: this.toSquadMobile(body.phoneNumber),
-      dob: format(body.dateOfBirth, 'MM/dd/yyyy'),
-      email: userDetails.email!,
-      bvn: body.bvn,
-      gender: this.toSquadGender(body.gender),
-      address: body.address,
-      customer_identifier: customerIdentifier,
-      ...(beneficiaryAccount ? { beneficiary_account: beneficiaryAccount } : {}),
-    });
+    const virtualAccount =
+      await this.squadService.createIndividualVirtualAccount({
+        first_name: body.firstName,
+        last_name: body.lastName,
+        middle_name: body.middleName,
+        mobile_num: this.toSquadMobile(body.phoneNumber),
+        dob: format(body.dateOfBirth, 'MM/dd/yyyy'),
+        email: userDetails.email!,
+        bvn: body.bvn,
+        gender: this.toSquadGender(body.gender),
+        address: body.address,
+        customer_identifier: customerIdentifier,
+        ...(beneficiaryAccount
+          ? { beneficiary_account: beneficiaryAccount }
+          : {}),
+      });
 
     const accountName = [body.firstName, body.middleName, body.lastName]
       .filter(Boolean)
       .join(' ');
 
-    if (
-      !virtualAccount?.virtual_account_number ||
-      !virtualAccount?.bank_code
-    ) {
+    if (!virtualAccount?.virtual_account_number || !virtualAccount?.bank_code) {
       throw new BadRequestException(
         'The bank service did not return a virtual account. Please try again.',
       );
@@ -345,9 +354,8 @@ export class AuthService {
 
     const ipAddress = this.urlService.getIpAddress(req);
     const displayName =
-      [userDetails.firstName, userDetails.lastName]
-        .filter(Boolean)
-        .join(' ') || 'there';
+      [userDetails.firstName, userDetails.lastName].filter(Boolean).join(' ') ||
+      'there';
 
     const otp = await this.otpService.sendOTPToEmail(
       email,
@@ -471,9 +479,8 @@ export class AuthService {
     });
 
     const displayName =
-      [userDetails.firstName, userDetails.lastName]
-        .filter(Boolean)
-        .join(' ') || 'there';
+      [userDetails.firstName, userDetails.lastName].filter(Boolean).join(' ') ||
+      'there';
     await this.emailService.sendPasswordChangedEmail(
       userDetails.email!,
       displayName,
@@ -525,8 +532,10 @@ export class AuthService {
         });
         existing.isEmailVerified = true;
       }
-      const accessToken =
-        await this.authenticationService.generateAuthToken(req, existing);
+      const accessToken = await this.authenticationService.generateAuthToken(
+        req,
+        existing,
+      );
       return LoginResponse.constructLoginResponse(existing, accessToken);
     }
 
