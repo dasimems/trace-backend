@@ -1,11 +1,15 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import Keyv from 'keyv';
+import { REDIS_CACHE } from '@shared/constants';
 import {
   TransactionCategoryEnum,
   TransactionDirectionEnum,
@@ -20,22 +24,58 @@ import AccountResponse from '@common/response/account/account.response';
 import BaseResponse from '@common/response/base.response';
 import TransactionResponse from '@common/response/transaction/transaction.response';
 import {
+  BankDTO,
+  FundAccountResponseDTO,
   RecentRecipientDTO,
   TransferLookupResponseDTO,
   WalletResponseDTO,
 } from '@common/response/wallet/wallet.dto';
+import { EventBusService } from '@common/events/event-bus.service';
 import { SquadService } from '@common/squad/squad.service';
 import { inferTransferCategory } from './category-inference';
-import { LookupAccountBodyDTO, TransferBodyDTO } from './wallet.dto';
+import {
+  FundAccountBodyDTO,
+  LookupAccountBodyDTO,
+  TransferBodyDTO,
+} from './wallet.dto';
 
 @Injectable()
 export class WalletService {
   private readonly logger = new Logger(WalletService.name);
 
+  // Squad's bank list barely changes; cache aggressively so the transfer
+  // screen renders instantly and we don't hit Squad on every page load.
+  private static readonly BANKS_CACHE_KEY = 'wallet:banks';
+  private static readonly BANKS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
   constructor(
     private readonly prismaService: PrismaService,
     private readonly squadService: SquadService,
+    private readonly eventBus: EventBusService,
+    @Inject(REDIS_CACHE) private readonly cache: Keyv,
   ) {}
+
+  async listBanks(): Promise<BaseResponse<BankDTO[]>> {
+    const cached = await this.cache.get<BankDTO[]>(WalletService.BANKS_CACHE_KEY);
+    if (cached) return new BaseResponse(cached);
+
+    const banks = await this.squadService.listBanks();
+    // Normalise Squad's snake_case shape to camelCase and drop any malformed
+    // entries Squad has occasionally returned in sandbox.
+    const normalised: BankDTO[] = banks
+      .filter((b) => b.bank_code && b.name)
+      .map((b) => ({ code: b.bank_code, name: b.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    if (normalised.length > 0) {
+      await this.cache.set(
+        WalletService.BANKS_CACHE_KEY,
+        normalised,
+        WalletService.BANKS_CACHE_TTL_MS,
+      );
+    }
+    return new BaseResponse(normalised);
+  }
 
   private async getPrimaryAccount(userId: string) {
     return this.prismaService.bankAccounts.findFirst({
@@ -54,8 +94,15 @@ export class WalletService {
   async getWallet(req: CustomRequest) {
     const auth = req.auth;
     if (!auth) throw new UnauthorizedException('Unauthorized!');
+    const snapshot = await this.buildWalletSnapshot(auth.id);
+    return new BaseResponse(snapshot);
+  }
 
-    const account = await this.getPrimaryAccount(auth.id);
+  // Used by both getWallet (fast read) and refreshWallet (after reconciliation).
+  private async buildWalletSnapshot(
+    userId: string,
+  ): Promise<WalletResponseDTO> {
+    const account = await this.getPrimaryAccount(userId);
     if (!account) {
       throw new NotFoundException(
         'No bank account found. Complete sign-up before viewing your wallet.',
@@ -95,7 +142,7 @@ export class WalletService {
       ]);
 
     const pending = pendingAgg._sum.amount ?? 0;
-    const response: WalletResponseDTO = {
+    return {
       account: AccountResponse.constructAccountDetails(account),
       balance: {
         available: Math.max(account.balance - pending, 0),
@@ -105,9 +152,8 @@ export class WalletService {
         todayOutflow: todayOutflowAgg._sum.amount ?? 0,
       },
     };
-
-    return new BaseResponse(response);
   }
+
 
   async lookupAccount(body: LookupAccountBodyDTO, req: CustomRequest) {
     const auth = req.auth;
@@ -124,6 +170,299 @@ export class WalletService {
       bankCode: body.bankCode,
     };
     return new BaseResponse(response);
+  }
+
+  // ─── Reconciliation against Squad (for missed/late webhooks) ─────────────
+
+  // Reverify a single PENDING transaction against Squad, picking the right
+  // endpoint based on direction. Idempotent and safe to call repeatedly.
+  // Used by /wallet/refresh (bulk), /wallet/transactions/:ref/reverify
+  // (single), and indirectly by a future reconciler cron.
+  // Public, no-auth wrapper for the reconciler cron. Skips ownership checks
+  // because the caller is the system itself, not a user-facing request.
+  async reverifyByReferenceUnscoped(reference: string) {
+    return this.reverifyPendingInternal(reference);
+  }
+
+  private async reverifyPendingInternal(reference: string) {
+    const tx = await this.prismaService.transactions.findUnique({
+      where: { reference },
+      select: TransactionSelect,
+    });
+    if (!tx) return null;
+    if (tx.status !== TransactionStatusEnum.PENDING) return tx;
+
+    if (tx.direction === TransactionDirectionEnum.CREDIT) {
+      // Fund-account top-up. /transaction/verify is the source of truth.
+      const remote = await this.squadService.verifyPayment(reference);
+      const status = (remote.transaction_status ?? '').toLowerCase();
+      if (status === 'success' || status === 'successful') {
+        return this.finaliseFundedTransaction(reference, {
+          gatewayRef: remote.gateway_ref,
+          paymentType: remote.payment_information?.payment_type,
+        });
+      }
+      if (status === 'failed' || status === 'fail' || status === 'cancelled') {
+        return this.prismaService.transactions.update({
+          where: { reference },
+          data: {
+            status: TransactionStatusEnum.FAILED,
+            processedAt: new Date(),
+          },
+          select: TransactionSelect,
+        });
+      }
+      return tx; // still PENDING at Squad — leave it.
+    }
+
+    // DEBIT (outbound transfer). /payout/requery describes the live state.
+    const remote = await this.squadService.requeryTransfer(reference);
+    const description = remote.response_description?.toLowerCase() || '';
+    let newStatus: TransactionStatusEnum = TransactionStatusEnum.PENDING;
+    if (description.includes('success') || description.includes('approved')) {
+      newStatus = TransactionStatusEnum.SUCCESS;
+    } else if (description.includes('reverse')) {
+      newStatus = TransactionStatusEnum.REVERSED;
+    } else if (description.includes('fail')) {
+      newStatus = TransactionStatusEnum.FAILED;
+    }
+    if (newStatus === TransactionStatusEnum.PENDING) return tx;
+
+    return this.prismaService.$transaction(async (db) => {
+      // Reversed/Failed transfers refund the held funds.
+      if (
+        newStatus === TransactionStatusEnum.FAILED ||
+        newStatus === TransactionStatusEnum.REVERSED
+      ) {
+        await db.bankAccounts.update({
+          where: { id: tx.accountId },
+          data: { balance: { increment: tx.amount } },
+        });
+      }
+      const updated = await db.transactions.update({
+        where: { id: tx.id },
+        data: {
+          status: newStatus,
+          providerReference:
+            remote.nip_transaction_reference ?? tx.providerReference,
+          recipientBankName:
+            remote.destination_institution_name ?? tx.recipientBankName,
+          processedAt: new Date(),
+        },
+        select: TransactionSelect,
+      });
+      // Notify SSE subscribers — the wallet stream filters to wallet.* events.
+      this.eventBus.publish(tx.userId, {
+        type: `wallet.transfer.${newStatus.toLowerCase()}`,
+        payload: {
+          transactionId: updated.id,
+          reference: updated.reference,
+          amount: updated.amount,
+          status: newStatus,
+        },
+      });
+      return updated;
+    });
+  }
+
+  // Single-reference reverify exposed to the frontend. Works for fund-account
+  // top-ups AND outbound transfers — direction is read from the local row.
+  async reverifyTransaction(reference: string, req: CustomRequest) {
+    const auth = req.auth;
+    if (!auth) throw new UnauthorizedException('Unauthorized!');
+
+    const tx = await this.prismaService.transactions.findUnique({
+      where: { reference },
+      select: { userId: true },
+    });
+    if (!tx || tx.userId !== auth.id) {
+      throw new NotFoundException('Transaction not found.');
+    }
+    const updated = await this.reverifyPendingInternal(reference);
+    if (!updated) throw new NotFoundException('Transaction not found.');
+    return TransactionResponse.createIndividualTransactionResponse(updated);
+  }
+
+  // Bulk reconcile all of the user's PENDING transactions against Squad and
+  // return the up-to-date wallet snapshot. Useful for "pull to refresh" /
+  // page-focus events / recovery from a missed webhook batch. Bounded to the
+  // 25 most-recent PENDING rows to keep tail latency in check; if you have
+  // more PENDING than that you have bigger problems anyway.
+  async refreshWallet(req: CustomRequest) {
+    const auth = req.auth;
+    if (!auth) throw new UnauthorizedException('Unauthorized!');
+
+    const pending = await this.prismaService.transactions.findMany({
+      where: {
+        userId: auth.id,
+        status: TransactionStatusEnum.PENDING,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+      select: { reference: true },
+    });
+
+    if (pending.length > 0) {
+      // Run in parallel — Squad's verify/requery endpoints are independent.
+      // One failure shouldn't sink the whole refresh; log and continue.
+      await Promise.all(
+        pending.map((p) =>
+          this.reverifyPendingInternal(p.reference).catch((err) => {
+            this.logger.warn(
+              `Reverify ${p.reference} failed during refresh: ${(err as Error).message}`,
+            );
+            return null;
+          }),
+        ),
+      );
+    }
+
+    // Return the fresh wallet snapshot — exactly what GET /wallet returns,
+    // so the frontend can swap it in directly.
+    return this.getWallet(req);
+  }
+
+  // ─── Fund account (payment-in via Squad checkout) ────────────────────────
+
+  async initiateFundAccount(body: FundAccountBodyDTO, req: CustomRequest) {
+    const auth = req.auth;
+    if (!auth) throw new UnauthorizedException('Unauthorized!');
+
+    const [account, user] = await Promise.all([
+      this.getPrimaryAccount(auth.id),
+      this.prismaService.users.findUnique({
+        where: { id: auth.id },
+        select: { id: true, email: true, firstName: true, lastName: true },
+      }),
+    ]);
+    if (!account) {
+      throw new NotFoundException(
+        'No bank account found. Complete sign-up before funding.',
+      );
+    }
+    if (!user) throw new UnauthorizedException('Unauthorized!');
+
+    // Unique, traceable reference. Squad accepts up to 100 chars; we keep
+    // ours short so it round-trips cleanly through their dashboard.
+    const reference = `trace-fund-${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+
+    // 1. Pre-create the local row in PENDING. Whichever path finalises first
+    //    (verify-on-return OR webhook) flips it to SUCCESS atomically.
+    await this.prismaService.transactions.create({
+      data: {
+        reference,
+        direction: TransactionDirectionEnum.CREDIT,
+        status: TransactionStatusEnum.PENDING,
+        category: TransactionCategoryEnum.INCOME,
+        description: 'Wallet top-up',
+        amount: body.amount,
+        principalAmount: body.amount,
+        currency: 'NGN',
+        remark: 'Payment via Squad checkout',
+        accountId: account.id,
+        userId: auth.id,
+      },
+    });
+
+    // 2. Ask Squad for a hosted checkout URL.
+    const customerName =
+      [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+      undefined;
+    const squadResult = await this.squadService.initiatePayment({
+      amount: body.amount,
+      email: user.email ?? `${user.id}@trace.local`,
+      currency: 'NGN',
+      transaction_ref: reference,
+      callback_url: body.callbackUrl,
+      initiate_type: 'inline',
+      customer_name: customerName,
+      payment_channels: ['card', 'bank', 'ussd', 'transfer'],
+      metadata: { userId: auth.id },
+    });
+
+    const checkoutUrl =
+      squadResult.checkout_url ?? squadResult.authorization_url ?? null;
+    if (!checkoutUrl) {
+      // Squad accepted but didn't return a URL — log + leave the local row as
+      // PENDING so the user can retry without orphaning state.
+      this.logger.error(
+        `Squad initiate accepted but returned no checkout URL for ref=${reference}`,
+      );
+      throw new BadGatewayException(
+        'Payment service did not return a checkout URL. Please try again.',
+      );
+    }
+
+    const response: FundAccountResponseDTO = {
+      checkoutUrl,
+      reference,
+      amount: body.amount,
+      currency: 'NGN',
+    };
+    return new BaseResponse(response);
+  }
+
+  // Frontend calls this after the user returns from Squad's checkout page.
+  // Thin wrapper around the unified reconciler — keeps the legacy endpoint
+  // working while the actual logic lives in one place.
+  async verifyFundAccount(reference: string, req: CustomRequest) {
+    return this.reverifyTransaction(reference, req);
+  }
+
+  // Shared finaliser: flips a PENDING fund-account row to SUCCESS, credits
+  // the user's balance, and publishes the SSE event. Idempotent — returns
+  // the existing row untouched if it's already SUCCESS. Public so the webhook
+  // handler can call it without going through HTTP.
+  async finaliseFundedTransaction(
+    reference: string,
+    meta: { gatewayRef?: string; paymentType?: string } = {},
+  ) {
+    return this.prismaService.$transaction(async (tx) => {
+      const row = await tx.transactions.findUnique({
+        where: { reference },
+        select: TransactionSelect,
+      });
+      if (!row) {
+        throw new NotFoundException(`Transaction ${reference} not found.`);
+      }
+      if (row.status === TransactionStatusEnum.SUCCESS) {
+        // Webhook + verify can race — the second caller short-circuits.
+        return row;
+      }
+
+      const updated = await tx.transactions.update({
+        where: { reference },
+        data: {
+          status: TransactionStatusEnum.SUCCESS,
+          providerReference: meta.gatewayRef ?? row.providerReference ?? null,
+          settledAmount: row.principalAmount ?? row.amount,
+          remark: meta.paymentType
+            ? `Payment via Squad (${meta.paymentType})`
+            : row.remark,
+          processedAt: new Date(),
+        },
+        select: TransactionSelect,
+      });
+      const account = await tx.bankAccounts.update({
+        where: { id: row.accountId },
+        data: { balance: { increment: row.amount } },
+        select: { balance: true },
+      });
+
+      // Fire-and-forget — event bus runs in-process, no async work to await.
+      this.eventBus.publish(row.userId, {
+        type: 'wallet.fund.received',
+        payload: {
+          transactionId: row.id,
+          reference: row.reference,
+          amount: row.amount,
+          balance: account.balance,
+          gatewayRef: meta.gatewayRef ?? null,
+          paymentType: meta.paymentType ?? null,
+        },
+      });
+      return updated;
+    });
   }
 
   async transfer(body: TransferBodyDTO, req: CustomRequest) {
@@ -240,74 +579,11 @@ export class WalletService {
     }
   }
 
+  // Legacy outbound-transfer requery endpoint. Now a thin wrapper around the
+  // unified reverify path — the heavy lifting lives in reverifyPendingInternal
+  // so we don't have two slightly-divergent copies of the same Squad parsing.
   async requeryTransfer(reference: string, req: CustomRequest) {
-    const auth = req.auth;
-    if (!auth) throw new UnauthorizedException('Unauthorized!');
-
-    const tx = await this.prismaService.transactions.findUnique({
-      where: { reference },
-      select: TransactionSelect,
-    });
-
-    if (!tx || tx.userId !== auth.id) {
-      throw new NotFoundException('Transaction not found.');
-    }
-
-    if (
-      tx.status === TransactionStatusEnum.SUCCESS ||
-      tx.status === TransactionStatusEnum.FAILED ||
-      tx.status === TransactionStatusEnum.REVERSED
-    ) {
-      return TransactionResponse.createIndividualTransactionResponse(tx);
-    }
-
-    try {
-      const remote = await this.squadService.requeryTransfer(reference);
-      const description = remote.response_description?.toLowerCase() || '';
-      let newStatus: TransactionStatusEnum = TransactionStatusEnum.PENDING;
-      if (description.includes('success') || description.includes('approved')) {
-        newStatus = TransactionStatusEnum.SUCCESS;
-      } else if (description.includes('reverse')) {
-        newStatus = TransactionStatusEnum.REVERSED;
-      } else if (description.includes('fail')) {
-        newStatus = TransactionStatusEnum.FAILED;
-      }
-
-      const updated = await this.prismaService.$transaction(async (db) => {
-        // If Squad confirms it reversed/failed, return the held funds.
-        if (
-          newStatus === TransactionStatusEnum.FAILED ||
-          newStatus === TransactionStatusEnum.REVERSED
-        ) {
-          await db.bankAccounts.update({
-            where: { id: tx.accountId },
-            data: { balance: { increment: tx.amount } },
-          });
-        }
-        return db.transactions.update({
-          where: { id: tx.id },
-          data: {
-            status: newStatus,
-            providerReference:
-              remote.nip_transaction_reference ?? tx.providerReference,
-            recipientBankName:
-              remote.destination_institution_name ?? tx.recipientBankName,
-            processedAt:
-              newStatus === TransactionStatusEnum.PENDING
-                ? tx.processedAt
-                : new Date(),
-          },
-          select: TransactionSelect,
-        });
-      });
-
-      return TransactionResponse.createIndividualTransactionResponse(updated);
-    } catch (error) {
-      this.logger.warn(
-        `Squad requery ${reference} failed: ${(error as Error).message}`,
-      );
-      throw error;
-    }
+    return this.reverifyTransaction(reference, req);
   }
 
   async getRecentRecipients(req: CustomRequest) {

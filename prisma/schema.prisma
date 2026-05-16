@@ -49,6 +49,7 @@ model Users {
   copilotMessages            CopilotMessages[]
   virtualCards               VirtualCards[]
   uploadedDocuments          UserUploadedDocuments[]
+  paymentRequests            PaymentRequests[]
 
   @@map("users")
 }
@@ -157,13 +158,72 @@ model Transactions {
   accountId String @map("account_id") @db.Uuid
   userId    String @map("user_id") @db.Uuid
 
-  user         Users        @relation(fields: [userId], references: [id])
-  bankAccounts BankAccounts @relation(fields: [accountId], references: [id])
+  user           Users            @relation(fields: [userId], references: [id])
+  bankAccounts   BankAccounts     @relation(fields: [accountId], references: [id])
+  // Set when this row was created in response to a successful payment request
+  // (fund-account top-up or shareable payment-in link). One-to-one — each
+  // payment request can produce at most one credit transaction.
+  paymentRequest PaymentRequests?
 
   @@index([userId, createdAt])
   @@index([accountId, createdAt])
   @@index([direction, status])
   @@map("transactions")
+}
+
+// ─── Payment requests ──────────────────────────────────────────────────────
+// One row per Squad checkout we open on behalf of a user. Covers two flows:
+// - FUND     → the user paying themselves (account top-up).
+// - REQUEST  → a shareable link the user sends to someone else to be paid.
+// Both go through POST /transaction/initiate; `kind` is just for UI/history.
+
+enum PaymentRequestKindEnum {
+  FUND
+  REQUEST
+}
+
+enum PaymentRequestStatusEnum {
+  PENDING
+  SUCCESS
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+model PaymentRequests {
+  id            String                   @id @default(uuid()) @db.Uuid
+  userId        String                   @map("user_id") @db.Uuid
+  reference     String                   @unique @map("reference")
+  // Squad's internal id (`gateway_ref`) once we get it from the webhook /
+  // verify call. Useful for support tickets and reconciliation.
+  gatewayRef    String?                  @map("gateway_ref")
+  kind          PaymentRequestKindEnum   @map("kind")
+  amount        Int                      @map("amount") // kobo
+  currency      String                   @default("NGN") @map("currency") @db.VarChar(3)
+  status        PaymentRequestStatusEnum @default(PENDING) @map("status")
+  description   String?                  @map("description")
+  // Hosted checkout URL Squad returned — the frontend redirects (FUND) or
+  // shares (REQUEST) this.
+  checkoutUrl   String                   @map("checkout_url")
+  callbackUrl   String?                  @map("callback_url")
+  paymentType   String?                  @map("payment_type") // 'card' | 'bank' | …
+  paidByEmail   String?                  @map("paid_by_email")
+  paidByName    String?                  @map("paid_by_name")
+  paidAt        DateTime?                @map("paid_at")
+  expiresAt     DateTime?                @map("expires_at")
+  metadata      Json?                    @map("metadata")
+  // Once the webhook lands and we credit the user's balance, we link the
+  // resulting CREDIT transaction so the user's history is traceable both ways.
+  transactionId String?                  @unique @map("transaction_id") @db.Uuid
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+
+  user        Users         @relation(fields: [userId], references: [id])
+  transaction Transactions? @relation(fields: [transactionId], references: [id])
+
+  @@index([userId, status, createdAt])
+  @@index([kind, status])
+  @@map("payment_requests")
 }
 
 // ─── Wallet pockets ────────────────────────────────────────────────────────
@@ -243,33 +303,33 @@ enum LoanRepaymentStatusEnum {
 }
 
 model LoanProducts {
-  id                    String              @id @default(uuid()) @db.Uuid
-  name                  String              @map("name")
-  provider              String              @map("provider")
-  type                  LoanProductTypeEnum @map("type")
+  id                    String                   @id @default(uuid()) @db.Uuid
+  name                  String                   @map("name")
+  provider              String                   @map("provider")
+  type                  LoanProductTypeEnum      @map("type")
   // Annual interest rate as basis points (e.g. 2400 = 24%). Integer math
   // beats Float for currency.
-  interestRateBps       Int                 @map("interest_rate_bps")
-  minAmount             Int                 @map("min_amount") // kobo
-  maxAmount             Int                 @map("max_amount") // kobo
-  minTenorDays          Int                 @map("min_tenor_days")
-  maxTenorDays          Int                 @map("max_tenor_days")
+  interestRateBps       Int                      @map("interest_rate_bps")
+  minAmount             Int                      @map("min_amount") // kobo
+  maxAmount             Int                      @map("max_amount") // kobo
+  minTenorDays          Int                      @map("min_tenor_days")
+  maxTenorDays          Int                      @map("max_tenor_days")
   // Drives the auto-deduction schedule. Existing rows default to WEEKLY.
   repaymentCadence      LoanRepaymentCadenceEnum @default(WEEKLY) @map("repayment_cadence")
-  requiredTier          LoanTierEnum        @map("required_tier")
-  description           String              @map("description")
+  requiredTier          LoanTierEnum             @map("required_tier")
+  description           String                   @map("description")
   // Free-form prose for the "honest read" risk write-up on the detail page.
-  riskNarrative         String?             @map("risk_narrative")
+  riskNarrative         String?                  @map("risk_narrative")
   // Templates for the opportunity detail screens. Shapes are documented in
   // the application-level JSON schemas (see common/response/opportunities/).
-  faqEntries            Json?               @map("faq_entries")
-  requiredDocuments     Json?               @map("required_documents")
-  costBreakdownTemplate Json?               @map("cost_breakdown_template")
+  faqEntries            Json?                    @map("faq_entries")
+  requiredDocuments     Json?                    @map("required_documents")
+  costBreakdownTemplate Json?                    @map("cost_breakdown_template")
   // Active products show up in /loans/products; inactive don't, but past
   // applications can still reference them.
-  isActive              Boolean             @default(true) @map("is_active")
-  createdAt             DateTime            @default(now()) @map("created_at")
-  updatedAt             DateTime            @updatedAt @map("updated_at")
+  isActive              Boolean                  @default(true) @map("is_active")
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
 
   applications LoanApplications[]
 

@@ -12,7 +12,13 @@ import {
 import { EventBusService } from '@common/events/event-bus.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { SquadService } from '@common/squad/squad.service';
-import { SquadVirtualAccountWebhookPayload } from '@common/squad/squad.dto';
+import {
+  SquadPaymentWebhookPayload,
+  SquadVirtualAccountWebhookPayload,
+} from '@common/squad/squad.dto';
+import { PaymentRequestsService } from '@modules/wallet/payment-requests.service';
+import { WalletService } from '@modules/wallet/wallet.service';
+import { PaymentRequestStatusEnum } from '@prisma/client';
 
 @Injectable()
 export class WebhooksService {
@@ -22,6 +28,8 @@ export class WebhooksService {
     private readonly prismaService: PrismaService,
     private readonly squadService: SquadService,
     private readonly eventBus: EventBusService,
+    private readonly walletService: WalletService,
+    private readonly paymentRequestsService: PaymentRequestsService,
   ) {}
 
   // Squad amounts come as decimal-string Naira (e.g. "222.00"). Persist in
@@ -145,5 +153,101 @@ export class WebhooksService {
       transaction_reference: created.reference,
       response_description: 'Success',
     };
+  }
+
+  // Payment-gateway webhook (distinct from virtual-account credit). Squad
+  // ships a `{ Event, TransactionRef, Body }` envelope here. We match by the
+  // TransactionRef we issued during /wallet/fund and reuse the same finaliser
+  // the verify endpoint uses, so race-with-verify is a no-op.
+  async handleSquadPaymentWebhook(
+    rawBody: string,
+    signature: string | undefined,
+    payload: SquadPaymentWebhookPayload,
+  ) {
+    if (!this.squadService.verifyWebhookSignature(rawBody, signature)) {
+      this.logger.warn('Rejected Squad payment webhook: bad signature');
+      throw new ForbiddenException('Invalid signature');
+    }
+
+    const event = (payload.Event ?? '').toLowerCase();
+    const body = payload.Body ?? {};
+    const reference =
+      payload.TransactionRef ?? body.transaction_ref ?? undefined;
+    if (!reference) {
+      throw new ForbiddenException('Missing transaction_ref');
+    }
+
+    const isSuccess =
+      event === 'charge_successful' ||
+      ['success', 'successful'].includes((body.status ?? '').toLowerCase());
+    const isFailure = ['failed', 'fail', 'cancelled'].includes(
+      (body.status ?? '').toLowerCase(),
+    );
+
+    // Preferred path: PaymentRequests row (new FUND/REQUEST flow).
+    const paymentRequest = await this.prismaService.paymentRequests.findUnique({
+      where: { reference },
+      select: { id: true, status: true },
+    });
+    if (paymentRequest) {
+      if (isSuccess) {
+        await this.paymentRequestsService.finaliseAsPaid(reference, {
+          gatewayRef: body.gateway_ref,
+          paymentType: body.payment_type,
+          paidByEmail: body.customer?.email ?? body.email,
+          paidByName: body.customer?.name,
+        });
+        return { status: 'ok' };
+      }
+      if (isFailure) {
+        if (paymentRequest.status === PaymentRequestStatusEnum.SUCCESS) {
+          return { status: 'ok' };
+        }
+        await this.prismaService.paymentRequests.update({
+          where: { id: paymentRequest.id },
+          data: { status: PaymentRequestStatusEnum.FAILED },
+        });
+        return { status: 'ok' };
+      }
+      return { status: 'ok' };
+    }
+
+    // Legacy fallback: pre-PaymentRequests rows still live on `transactions`.
+    // We keep this branch so in-flight fund-account PENDINGs from before the
+    // refactor can still settle through the same webhook URL.
+    const existing = await this.prismaService.transactions.findUnique({
+      where: { reference },
+      select: { id: true, status: true },
+    });
+    if (!existing) {
+      this.logger.warn(
+        `Squad payment webhook for unknown ref ${reference}; ignoring.`,
+      );
+      return { status: 'ignored' };
+    }
+
+    if (isSuccess) {
+      await this.walletService.finaliseFundedTransaction(reference, {
+        gatewayRef: body.gateway_ref,
+        paymentType: body.payment_type,
+      });
+      return { status: 'ok' };
+    }
+    if (isFailure) {
+      // Skip if already SUCCESS (race) — verify path already finalised.
+      if (existing.status === TransactionStatusEnum.SUCCESS) {
+        return { status: 'ok' };
+      }
+      await this.prismaService.transactions.update({
+        where: { reference },
+        data: {
+          status: TransactionStatusEnum.FAILED,
+          processedAt: new Date(),
+        },
+      });
+      return { status: 'ok' };
+    }
+    // Unknown / pending — leave the row as-is and ack so Squad stops retrying.
+    return { status: 'ok' };
   }
 }

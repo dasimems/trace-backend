@@ -14,13 +14,18 @@ import {
   SQUAD_BENEFICIARY_ACCOUNT,
   SQUAD_SECRET_KEY,
 } from '../../shared/constants';
+import { STATIC_NIP_BANKS } from './squad.banks';
 import {
   SquadAccountLookupData,
   SquadAccountLookupPayload,
   SquadApiResponse,
+  SquadBank,
   SquadCreateVirtualAccountPayload,
+  SquadInitiatePaymentData,
+  SquadInitiatePaymentPayload,
   SquadTransferData,
   SquadTransferPayload,
+  SquadVerifyPaymentData,
   SquadVirtualAccountData,
 } from './squad.dto';
 
@@ -118,6 +123,30 @@ export class SquadService {
     return response.data;
   }
 
+  // Bank list with NIP institution codes. The exact Squad endpoint for this
+  // has shifted between docs versions and `GET /payout/banks` is not currently
+  // reachable in our environment (returns 404). Until we confirm the live path
+  // we serve the curated NIBSS-governed static list — codes are governed by
+  // NIBSS, not Squad, so they're identical across PSPs anyway. When Squad's
+  // endpoint is confirmed, swap the call below and keep the static list as
+  // the fallback so a transient outage never breaks the transfer screen.
+  async listBanks(): Promise<SquadBank[]> {
+    // Short-circuit when Squad isn't configured at all — the static list still
+    // works for the dev/demo path.
+    if (!this.enabled) return STATIC_NIP_BANKS;
+    try {
+      const response = await this.request<SquadBank[]>('GET', '/payout/banks');
+      const live = response.data;
+      if (Array.isArray(live) && live.length > 0) return live;
+      return STATIC_NIP_BANKS;
+    } catch (err) {
+      this.logger.warn(
+        `Squad bank-list call failed (${(err as Error).message}); serving NIBSS static fallback.`,
+      );
+      return STATIC_NIP_BANKS;
+    }
+  }
+
   // POST /payout/account/lookup — verify recipient before initiating a transfer
   async lookupAccount(payload: SquadAccountLookupPayload) {
     const response = await this.request<SquadAccountLookupData>(
@@ -146,6 +175,30 @@ export class SquadService {
       { transaction_reference: transactionReference },
     );
     return response.data;
+  }
+
+  // POST /transaction/initiate — create a hosted checkout for an inbound
+  // payment. Returns a checkout/authorization URL the frontend redirects to.
+  async initiatePayment(
+    payload: SquadInitiatePaymentPayload,
+  ): Promise<SquadInitiatePaymentData> {
+    const response = await this.request<SquadInitiatePaymentData>(
+      'POST',
+      '/transaction/initiate',
+      payload,
+    );
+    return response.data;
+  }
+
+  // GET /transaction/verify/:reference — pull final state for a payment. Used
+  // both for the callback-after-redirect path AND as a safety net when the
+  // webhook hasn't arrived yet.
+  async verifyPayment(transactionRef: string): Promise<SquadVerifyPaymentData> {
+    const response = await this.request<SquadVerifyPaymentData>(
+      'GET',
+      `/transaction/verify/${encodeURIComponent(transactionRef)}`,
+    );
+    return response.data ?? {};
   }
 
   // Webhook signature verification. Squad signs the whole serialized body with

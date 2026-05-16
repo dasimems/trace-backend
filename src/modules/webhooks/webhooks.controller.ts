@@ -9,7 +9,10 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { SquadVirtualAccountWebhookPayload } from '@common/squad/squad.dto';
+import {
+  SquadPaymentWebhookPayload,
+  SquadVirtualAccountWebhookPayload,
+} from '@common/squad/squad.dto';
 import { routes, subRoutes } from '@shared/variables';
 import { WebhooksService } from './webhooks.service';
 
@@ -45,6 +48,30 @@ export class WebhooksController {
     );
     // Bypass the global response interceptor so Squad receives exactly the
     // shape it expects.
+    return res.status(200).send(result);
+  }
+
+  @Post(`${subRoutes.squad}${subRoutes.payment}`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Squad payment-gateway webhook (charge_successful etc.)',
+    description:
+      "Receives charge/payment notifications from Squad's payment gateway after a /wallet/fund checkout completes. Idempotent — calls the same finaliser the verify endpoint uses, so racing with verify is a no-op.",
+  })
+  async squadPayment(
+    @Req() req: RawBodyRequest,
+    @Res() res: FastifyReply,
+    @Body() body: SquadPaymentWebhookPayload,
+    @Headers('x-squad-encrypted-body') signatureA?: string,
+    @Headers('x-squad-signature') signatureB?: string,
+  ) {
+    const signature = signatureA || signatureB;
+    const rawBody = req.rawBody?.toString('utf8') ?? JSON.stringify(body);
+    const result = await this.webhooksService.handleSquadPaymentWebhook(
+      rawBody,
+      signature,
+      body,
+    );
     return res.status(200).send(result);
   }
 }

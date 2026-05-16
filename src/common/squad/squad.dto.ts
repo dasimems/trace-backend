@@ -29,6 +29,13 @@ export interface SquadVirtualAccountData {
   updated_at: string;
 }
 
+// GET /payout/banks — returns the full NIP-supported bank list with their NIP
+// institution codes. List is stable; suitable for long-lived caching.
+export interface SquadBank {
+  bank_code: string;
+  name: string;
+}
+
 export interface SquadAccountLookupPayload {
   bank_code: string;
   account_number: string;
@@ -57,6 +64,78 @@ export interface SquadTransferData {
   account_number: string;
   account_name: string;
   destination_institution_name?: string;
+}
+
+// POST /transaction/initiate — start a checkout (card / bank / USSD).
+// Amount is sent in KOBO as an integer (Squad's docs are explicit on this for
+// /transaction/initiate even though /payout/transfer uses a string).
+export type SquadPaymentChannel =
+  | 'card'
+  | 'bank'
+  | 'ussd'
+  | 'transfer'
+  | 'qr';
+
+export interface SquadInitiatePaymentPayload {
+  amount: number;
+  email: string;
+  currency: 'NGN';
+  transaction_ref: string;
+  callback_url?: string;
+  initiate_type?: 'inline' | 'redirect';
+  customer_name?: string;
+  payment_channels?: SquadPaymentChannel[];
+  metadata?: Record<string, unknown>;
+  pass_charge?: boolean;
+}
+
+export interface SquadInitiatePaymentData {
+  // Hosted checkout the user gets redirected to.
+  checkout_url?: string;
+  authorization_url?: string;
+  access_token?: string;
+  transaction_ref: string;
+  amount: number;
+  currency: 'NGN';
+  callback_url?: string;
+  merchant_info?: Record<string, unknown>;
+}
+
+// GET /transaction/verify/:ref — Squad's response shape varies in case; key
+// names are documented as PascalCase but sandbox sometimes returns snake_case.
+// Treat the status string case-insensitively.
+export interface SquadVerifyPaymentData {
+  transaction_status?: string; // 'Success' | 'Pending' | 'Failed'
+  transaction_amount?: number;
+  transaction_currency_id?: string;
+  transaction_ref?: string;
+  email?: string;
+  merchant_amount?: number;
+  created_at?: string;
+  // Sandbox + some live responses also bubble up gateway details.
+  gateway_ref?: string;
+  payment_information?: {
+    payment_type?: string;
+  };
+}
+
+// Webhook from Squad's payment gateway. Distinct shape from the
+// virtual-account credit webhook — uses Event + TransactionRef + Body envelope.
+export interface SquadPaymentWebhookPayload {
+  Event?: string; // e.g. 'charge_successful'
+  TransactionRef?: string;
+  Body?: {
+    amount?: number;
+    transaction_ref?: string;
+    email?: string;
+    currency?: string;
+    status?: string; // 'Success' | 'Failed'
+    gateway_ref?: string;
+    payment_type?: string;
+    customer?: { name?: string; email?: string };
+  };
+  // Allow unknown top-level keys — Squad sometimes ships extra metadata.
+  [key: string]: unknown;
 }
 
 export interface SquadApiResponse<T> {

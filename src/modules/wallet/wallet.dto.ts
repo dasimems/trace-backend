@@ -115,3 +115,32 @@ export class TransferBodyDTO {
   })
   category?: TransactionCategoryEnum;
 }
+
+export class FundAccountBodyDTO {
+  @ApiProperty({
+    description: 'Amount to fund in KOBO (₦1 = 100 kobo). Min ₦100.',
+    type: Number,
+    example: 50000,
+    minimum: 10_000,
+    maximum: 100_000_000_00,
+  })
+  @IsDefined({ message: 'Amount is required' })
+  @IsInt({ message: 'Amount must be an integer (in kobo)' })
+  @Min(10_000, { message: 'Amount must be at least ₦100 (10,000 kobo)' })
+  @Max(100_000_000_00, {
+    message: 'Amount cannot exceed ₦100,000,000 per top-up',
+  })
+  amount: number;
+
+  @ApiProperty({
+    description:
+      "URL the user is redirected back to after paying at Squad's hosted page. Should be a deep link into your frontend (e.g. https://app.trace.ng/wallet/fund/callback).",
+    type: String,
+    required: false,
+    example: 'https://app.trace.ng/wallet/fund/callback',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(toTrimmed, { toClassOnly: true })
+  callbackUrl?: string;
+}

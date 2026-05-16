@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -27,10 +28,18 @@ import { TransactionResponseDTO } from '@common/response/transaction/transaction
 import { WalletPocketDTO } from '@common/response/wallet/pocket.dto';
 import { VirtualCardDTO } from '@common/response/wallet/virtual-card.dto';
 import {
+  BankDTO,
+  FundAccountResponseDTO,
+  PaymentRequestDTO,
   RecentRecipientDTO,
   TransferLookupResponseDTO,
   WalletResponseDTO,
 } from '@common/response/wallet/wallet.dto';
+import {
+  CreatePaymentRequestBodyDTO,
+  GetPaymentRequestsQueryDTO,
+} from './payment-requests.dto';
+import { PaymentRequestsService } from './payment-requests.service';
 import { routes, subRoutes } from '@shared/variables';
 import {
   AllocateToPocketBodyDTO,
@@ -41,7 +50,11 @@ import {
 import { PocketService } from './pocket.service';
 import { CreateVirtualCardBodyDTO } from './virtual-card.dto';
 import { VirtualCardService } from './virtual-card.service';
-import { LookupAccountBodyDTO, TransferBodyDTO } from './wallet.dto';
+import {
+  FundAccountBodyDTO,
+  LookupAccountBodyDTO,
+  TransferBodyDTO,
+} from './wallet.dto';
 import { WalletService } from './wallet.service';
 
 @ApiTags('Wallet')
@@ -53,6 +66,7 @@ export class WalletController {
     private readonly pocketService: PocketService,
     private readonly virtualCardService: VirtualCardService,
     private readonly eventBus: EventBusService,
+    private readonly paymentRequestsService: PaymentRequestsService,
   ) {}
 
   // SSE — register BEFORE the class-level AuthGuard so SseAuthGuard runs
@@ -123,12 +137,177 @@ export class WalletController {
   @HttpCode(200)
   @ApiOperation({
     summary: 'Get wallet snapshot (account + balances)',
+    description:
+      'Fast read straight from the local ledger. Call POST /wallet/refresh if you want to reconcile PENDING rows against Squad first (e.g. on pull-to-refresh, after a missed webhook).',
   })
   @ApiOkResponseData(WalletResponseDTO, {
     description: "Returns the user's primary bank account and balance figures.",
   })
   getWallet(@Req() req: CustomRequest) {
     return this.walletService.getWallet(req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Post(subRoutes.refresh)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Reconcile PENDING transactions against Squad and return wallet',
+    description:
+      "Walks the user's PENDING transactions (up to 25 most recent), calls Squad's /transaction/verify (credits) or /payout/requery (debits) on each, applies whatever the live state is, and returns the freshened wallet snapshot. Use this as the recovery path for missed webhook events. Idempotent — racing the webhook is a no-op.",
+  })
+  @ApiOkResponseData(WalletResponseDTO, {
+    description: 'Wallet snapshot after reconciliation.',
+  })
+  refreshWallet(@Req() req: CustomRequest) {
+    return this.walletService.refreshWallet(req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get(`${subRoutes.transactions}/:reference${subRoutes.reverify}`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Reverify a single transaction against Squad by reference',
+    description:
+      "Direction-agnostic: routes to /transaction/verify for fund-account credits and /payout/requery for outbound transfers based on the local row's direction. Idempotent. Emits the corresponding wallet.* SSE event on resolution.",
+  })
+  @ApiOkResponseData(TransactionResponseDTO, {
+    description: 'Returns the (possibly updated) transaction.',
+  })
+  reverifyTransaction(
+    @Param('reference') reference: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.walletService.reverifyTransaction(reference, req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Post(subRoutes.fund)
+  @HttpCode(201)
+  @ApiOperation({
+    summary: 'Top up wallet via Squad checkout',
+    description:
+      "Creates a PENDING credit row and returns a Squad-hosted `checkoutUrl` the frontend redirects the user to. Frontend should pass a `callbackUrl` deep link so the user lands back on a verify page. After payment, call GET /wallet/fund/:reference to confirm — the webhook will also finalise asynchronously, so either path works.",
+  })
+  @ApiCreatedResponseData(FundAccountResponseDTO, {
+    description: 'Returns the checkout URL + local reference.',
+  })
+  initiateFundAccount(
+    @Body() body: FundAccountBodyDTO,
+    @Req() req: CustomRequest,
+  ) {
+    return this.walletService.initiateFundAccount(body, req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get(`${subRoutes.fund}/:reference`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Verify and finalise a wallet top-up',
+    description:
+      "Pulls live status from Squad. Idempotent — safe to call multiple times. On 'Success' it flips the PENDING row to SUCCESS, credits the balance, and emits `wallet.fund.received` on the wallet SSE stream.",
+  })
+  @ApiOkResponseData(TransactionResponseDTO, {
+    description: 'Returns the (possibly updated) transaction.',
+  })
+  verifyFundAccount(
+    @Param('reference') reference: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.walletService.verifyFundAccount(reference, req);
+  }
+
+  // ─── Payment requests (FUND + REQUEST shareable links) ───────────────────
+
+  @UseGuards(AuthGuard)
+  @Post(subRoutes.paymentRequests)
+  @HttpCode(201)
+  @ApiOperation({
+    summary: 'Create a shareable payment-request link',
+    description:
+      "Creates a Squad checkout the user can share with someone else (e.g. for splitting a bill). Returns a `checkoutUrl` to share. When paid, the credit lands on the requester's account and we emit `wallet.payment_request.paid` on the wallet SSE stream.",
+  })
+  @ApiCreatedResponseData(PaymentRequestDTO)
+  createPaymentRequest(
+    @Body() body: CreatePaymentRequestBodyDTO,
+    @Req() req: CustomRequest,
+  ) {
+    return this.paymentRequestsService.createForRequest(body, req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get(subRoutes.paymentRequests)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'List the user’s payment requests (FUND + REQUEST)',
+    description:
+      "Paginated. Filter with ?kind=FUND|REQUEST and/or ?status=PENDING|SUCCESS|FAILED|EXPIRED|CANCELLED.",
+  })
+  @ApiOkResponseData(PaymentRequestDTO, { isArray: true })
+  listPaymentRequests(
+    @Query() query: GetPaymentRequestsQueryDTO,
+    @Req() req: CustomRequest,
+  ) {
+    return this.paymentRequestsService.list(query, req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get(`${subRoutes.paymentRequests}/:reference`)
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Get a single payment request by reference' })
+  @ApiOkResponseData(PaymentRequestDTO)
+  getPaymentRequest(
+    @Param('reference') reference: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.paymentRequestsService.getByReference(reference, req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get(`${subRoutes.paymentRequests}/:reference${subRoutes.reverify}`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Reverify a payment request against Squad',
+    description:
+      'Idempotent. Hits Squad even if the local row already shows PENDING. Use this as a missed-webhook recovery path.',
+  })
+  @ApiOkResponseData(PaymentRequestDTO)
+  reverifyPaymentRequest(
+    @Param('reference') reference: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.paymentRequestsService.reverify(reference, req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Delete(`${subRoutes.paymentRequests}/:reference`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Cancel a pending payment request',
+    description:
+      "Marks the request CANCELLED. Only allowed while it is PENDING — once paid (or failed) it's final.",
+  })
+  @ApiOkResponseData(PaymentRequestDTO)
+  cancelPaymentRequest(
+    @Param('reference') reference: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.paymentRequestsService.cancel(reference, req);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get(subRoutes.banks)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'List supported banks for outbound transfers',
+    description:
+      'Returns the full NIP-supported bank list (code + name) from Squad. Result is cached server-side for 24h.',
+  })
+  @ApiOkResponseData(BankDTO, {
+    isArray: true,
+    description: 'Banks sorted alphabetically by name.',
+  })
+  listBanks() {
+    return this.walletService.listBanks();
   }
 
   @UseGuards(AuthGuard)
