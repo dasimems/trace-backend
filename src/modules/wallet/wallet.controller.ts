@@ -20,6 +20,7 @@ import {
 } from '@common/response/api-response.decorator';
 import { TransactionResponseDTO } from '@common/response/transaction/transaction.dto';
 import { WalletPocketDTO } from '@common/response/wallet/pocket.dto';
+import { VirtualCardDTO } from '@common/response/wallet/virtual-card.dto';
 import {
   RecentRecipientDTO,
   TransferLookupResponseDTO,
@@ -33,6 +34,8 @@ import {
   UpdatePocketBodyDTO,
 } from './pocket.dto';
 import { PocketService } from './pocket.service';
+import { CreateVirtualCardBodyDTO } from './virtual-card.dto';
+import { VirtualCardService } from './virtual-card.service';
 import { LookupAccountBodyDTO, TransferBodyDTO } from './wallet.dto';
 import { WalletService } from './wallet.service';
 
@@ -44,6 +47,7 @@ export class WalletController {
   constructor(
     private readonly walletService: WalletService,
     private readonly pocketService: PocketService,
+    private readonly virtualCardService: VirtualCardService,
   ) {}
 
   @Get('/')
@@ -197,5 +201,64 @@ export class WalletController {
     @Req() req: CustomRequest,
   ) {
     return this.pocketService.withdrawFromPocket(id, body, req);
+  }
+
+  // ─── Virtual cards ─────────────────────────────────────────────────────
+
+  @Get(subRoutes.cards)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'List the user’s virtual cards',
+    description:
+      'Cards are not actually issued (no card-issuer integration). Returned values are persisted but the card numbers do not authorize real payments.',
+  })
+  @ApiOkResponseData(VirtualCardDTO, { isArray: true })
+  listCards(@Req() req: CustomRequest) {
+    return this.virtualCardService.list(req);
+  }
+
+  @Post(subRoutes.cards)
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Mint a new virtual card' })
+  @ApiCreatedResponseData(VirtualCardDTO)
+  createCard(
+    @Body() body: CreateVirtualCardBodyDTO,
+    @Req() req: CustomRequest,
+  ) {
+    return this.virtualCardService.create(body, req);
+  }
+
+  @Patch(`${subRoutes.cards}/:id${subRoutes.freeze}`)
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Freeze an active card (status → FROZEN)' })
+  @ApiOkResponseData(VirtualCardDTO)
+  freezeCard(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.virtualCardService.freeze(id, req);
+  }
+
+  @Patch(`${subRoutes.cards}/:id`)
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Unfreeze a card (status → ACTIVE)' })
+  @ApiOkResponseData(VirtualCardDTO)
+  unfreezeCard(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.virtualCardService.unfreeze(id, req);
+  }
+
+  @Delete(`${subRoutes.cards}/:id`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Terminate a card (status → TERMINATED, hidden from list)',
+  })
+  terminateCard(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.virtualCardService.terminate(id, req);
   }
 }

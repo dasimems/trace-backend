@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -12,22 +13,30 @@ import {
   TransactionStatusEnum,
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
-import { AnthropicService } from '@common/anthropic/anthropic.service';
-import { AnthropicMessage } from '@common/anthropic/anthropic.dto';
+import { LlmService } from '@common/llm/llm.service';
+import { LlmMessage } from '@common/llm/llm.dto';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
+import {
+  CopilotContextResponseDTO,
+  Tone as ContextTone,
+} from '@common/response/copilot/copilot-context.dto';
 import { detectAnomalies } from '@common/scoring/anomaly-detection';
 import { computeFinancialHealth } from '@common/scoring/financial-health';
 import { detectRecurring } from '@common/scoring/recurring-detection';
 import { deriveLoanTier } from '@common/scoring/loan-tier';
 import { generateRecommendations } from '@common/scoring/recommendation-engine';
 import { ScoringTransaction } from '@common/scoring/scoring.types';
+import { InsightsService } from '@modules/analysis/insights.service';
 import { COPILOT_SYSTEM_PROMPT } from './copilot.prompts';
 import { COPILOT_TOOLS } from './copilot.tools';
 import {
+  CopilotChatDTO,
   CopilotMessageDTO,
+  CreateCopilotChatBodyDTO,
   GetCopilotMessagesQueryDTO,
+  RenameCopilotChatBodyDTO,
   SendCopilotMessageBodyDTO,
 } from './copilot.dto';
 
@@ -41,7 +50,8 @@ export class CopilotService {
 
   constructor(
     private readonly prismaService: PrismaService,
-    private readonly anthropicService: AnthropicService,
+    private readonly llmService: LlmService,
+    private readonly insightsService: InsightsService,
   ) {}
 
   private requireAuth(req: CustomRequest) {
@@ -50,18 +60,86 @@ export class CopilotService {
     return auth;
   }
 
-  async listMessages(query: GetCopilotMessagesQueryDTO, req: CustomRequest) {
+  async listChats(req: CustomRequest) {
     const auth = this.requireAuth(req);
+    const chats = await this.prismaService.copilotChats.findMany({
+      where: { userId: auth.id },
+      orderBy: { updatedAt: 'desc' },
+      include: { _count: { select: { messages: true } } },
+    });
+    const data: CopilotChatDTO[] = chats.map((c) => ({
+      id: c.id,
+      title: c.title,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      messageCount: c._count.messages,
+    }));
+    return new BaseResponse(data);
+  }
+
+  async createChat(body: CreateCopilotChatBodyDTO, req: CustomRequest) {
+    const auth = this.requireAuth(req);
+    const chat = await this.prismaService.copilotChats.create({
+      data: {
+        userId: auth.id,
+        title: body.title?.length ? body.title : 'New chat',
+      },
+    });
+    return new BaseResponse(this.toChatDTO(chat, 0));
+  }
+
+  async renameChat(
+    chatId: string,
+    body: RenameCopilotChatBodyDTO,
+    req: CustomRequest,
+  ) {
+    const auth = this.requireAuth(req);
+    await this.assertChatOwned(chatId, auth.id);
+    const chat = await this.prismaService.copilotChats.update({
+      where: { id: chatId },
+      data: { title: body.title },
+      include: { _count: { select: { messages: true } } },
+    });
+    return new BaseResponse(this.toChatDTO(chat, chat._count.messages));
+  }
+
+  async deleteChat(chatId: string, req: CustomRequest) {
+    const auth = this.requireAuth(req);
+    await this.assertChatOwned(chatId, auth.id);
+    // Cascade on the FK removes the messages.
+    await this.prismaService.copilotChats.delete({ where: { id: chatId } });
+    return new BaseResponse({ deleted: true });
+  }
+
+  async listMessages(
+    chatId: string | undefined,
+    query: GetCopilotMessagesQueryDTO,
+    req: CustomRequest,
+  ) {
+    const auth = this.requireAuth(req);
+    const chat = chatId
+      ? await this.assertChatOwned(chatId, auth.id)
+      : await this.findMostRecentChat(auth.id);
+    if (!chat) {
+      // No chats yet — return an empty page rather than 404 so the client can
+      // render an empty state without special-casing.
+      return new BaseResponse<CopilotMessageDTO[]>([], {
+        page: 1,
+        limit: 50,
+        totalItems: 0,
+        req,
+      });
+    }
     const { page, limit, skip } = this.prismaService.getPaginationDetails({
       page: query.page?.toString(),
       limit: query.limit?.toString(),
     });
     const [totalItems, rows] = await this.prismaService.$transaction([
       this.prismaService.copilotMessages.count({
-        where: { userId: auth.id },
+        where: { chatId: chat.id },
       }),
       this.prismaService.copilotMessages.findMany({
-        where: { userId: auth.id },
+        where: { chatId: chat.id },
         orderBy: { createdAt: 'asc' },
         skip,
         take: limit,
@@ -76,31 +154,44 @@ export class CopilotService {
     return new BaseResponse(messages, { page, limit, totalItems, req });
   }
 
-  async sendMessage(body: SendCopilotMessageBodyDTO, req: CustomRequest) {
+  async sendMessage(
+    chatId: string | undefined,
+    body: SendCopilotMessageBodyDTO,
+    req: CustomRequest,
+  ) {
     const auth = this.requireAuth(req);
-    if (!this.anthropicService.isEnabled()) {
+    if (!this.llmService.isEnabled()) {
       throw new ServiceUnavailableException(
         'Copilot is not configured on this server (ANTHROPIC_API_KEY missing).',
       );
     }
 
+    // Resolve target chat: explicit param > most-recent > auto-created default.
+    const chat = chatId
+      ? await this.assertChatOwned(chatId, auth.id)
+      : (await this.findMostRecentChat(auth.id)) ??
+        (await this.prismaService.copilotChats.create({
+          data: { userId: auth.id, title: 'Default' },
+        }));
+
     // Persist the user turn first so it's preserved even if Claude fails.
     const userMessage = await this.prismaService.copilotMessages.create({
       data: {
         userId: auth.id,
+        chatId: chat.id,
         role: CopilotRoleEnum.USER,
         content: body.content,
       },
     });
 
     const historyRows = await this.prismaService.copilotMessages.findMany({
-      where: { userId: auth.id },
+      where: { chatId: chat.id },
       orderBy: { createdAt: 'desc' },
       take: MAX_HISTORY_MESSAGES,
     });
     const history = historyRows.reverse(); // oldest first for Claude
 
-    const messages: AnthropicMessage[] = history.map((m) => ({
+    const messages: LlmMessage[] = history.map((m) => ({
       role: m.role === CopilotRoleEnum.USER ? 'user' : 'assistant',
       content: m.content,
     }));
@@ -108,7 +199,7 @@ export class CopilotService {
     const snapshot = await this.buildUserSnapshot(auth.id);
     // runTools = chat + tool-use loop. The model can call any tool in
     // COPILOT_TOOLS — handler dispatches to private methods below.
-    const { finalText } = await this.anthropicService.runTools({
+    const { finalText } = await this.llmService.runTools({
       systemBlocks: [
         // Stable — cached.
         COPILOT_SYSTEM_PROMPT,
@@ -124,16 +215,18 @@ export class CopilotService {
     const assistantText = finalText;
 
     if (!assistantText) {
-      // Don't lose the user turn — but tell them we couldn't respond.
       const fallback = await this.prismaService.copilotMessages.create({
         data: {
           userId: auth.id,
+          chatId: chat.id,
           role: CopilotRoleEnum.ASSISTANT,
           content:
             "I couldn't reach my reasoning engine just now — please try again in a moment.",
         },
       });
+      await this.touchChat(chat.id, userMessage.content);
       return new BaseResponse({
+        chatId: chat.id,
         message: this.toDTO(userMessage),
         reply: this.toDTO(fallback),
       });
@@ -142,23 +235,219 @@ export class CopilotService {
     const assistantMessage = await this.prismaService.copilotMessages.create({
       data: {
         userId: auth.id,
+        chatId: chat.id,
         role: CopilotRoleEnum.ASSISTANT,
         content: assistantText.trim(),
       },
     });
+    await this.touchChat(chat.id, userMessage.content);
 
     return new BaseResponse({
+      chatId: chat.id,
       message: this.toDTO(userMessage),
       reply: this.toDTO(assistantMessage),
     });
   }
 
-  async clearMessages(req: CustomRequest) {
+  // Rolled-up context the wallet's CopilotCard + the chat rail render. The
+  // frontend used to need 3+ separate calls; this returns the union as a
+  // single DTO. Pure composition of existing compute methods.
+  async getContext(req: CustomRequest) {
     const auth = this.requireAuth(req);
+    const { transactions, balance } = await this.insightsService.loadContext(
+      auth.id,
+    );
+
+    // Health drives both the score + the tone chip in the rail.
+    const health = this.insightsService.computeHealth(transactions, balance);
+
+    // Run summary + recommendations in parallel — both touch Claude (cached
+    // system prompt) but their user payloads differ, so neither blocks the
+    // other.
+    const [summary, recommendations] = await Promise.all([
+      this.insightsService.computeWeeklySummaryFor(transactions, balance),
+      this.insightsService.computeRecommendationsFor(transactions, balance),
+    ]);
+
+    const obligations = await this.upcomingObligationsFor(auth.id);
+    const liveBufferPercent = this.computeLiveBufferPercent(transactions);
+
+    const headline =
+      summary.bullets[0]?.text ??
+      (health.status === 'insufficient_data'
+        ? 'Not enough activity yet to summarize.'
+        : 'Quiet stretch — no headline activity this period.');
+    const top = recommendations.recommendations[0] ?? null;
+
+    const response: CopilotContextResponseDTO = {
+      healthScore: health.score,
+      healthTone: health.tone as ContextTone,
+      weeklySummaryHeadline: headline,
+      topRecommendation: top
+        ? {
+            title: top.title,
+            detail: top.detail,
+            tag: { label: top.tag.label, tone: top.tag.tone as ContextTone },
+          }
+        : null,
+      upcomingObligations: obligations,
+      liveBufferPercent,
+    };
+    return new BaseResponse(response);
+  }
+
+  // Loan repayments coming due in the next 14 days + recurring debits whose
+  // next-expected date falls in that window. Bounded to 4 entries.
+  private async upcomingObligationsFor(userId: string) {
+    const now = new Date();
+    const horizon = new Date(now.getTime() + 14 * 24 * 3600 * 1000);
+
+    const [loans, transactions] = await Promise.all([
+      this.prismaService.loanApplications.findMany({
+        where: {
+          userId,
+          status: 'DISBURSED',
+          dueAt: { gte: now, lte: horizon },
+        },
+        include: { product: { select: { name: true } } },
+        orderBy: { dueAt: 'asc' },
+      }),
+      this.prismaService.transactions.findMany({
+        where: { userId },
+        select: TransactionSelect,
+      }),
+    ]);
+
+    const obligations: CopilotContextResponseDTO['upcomingObligations'] =
+      loans.map((l) => ({
+        label: `${l.product.name} · repayment`,
+        amount: l.approvedAmount ?? l.requestedAmount,
+        dueAt: l.dueAt!,
+      }));
+
+    // Add recurring debits whose next occurrence is in-window.
+    const recurring = detectRecurring(transactions as ScoringTransaction[]);
+    for (const r of recurring) {
+      if (
+        r.direction !== 'DEBIT' ||
+        !r.nextExpected ||
+        r.nextExpected < now ||
+        r.nextExpected > horizon
+      ) {
+        continue;
+      }
+      obligations.push({
+        label: r.counterparty,
+        amount: r.averageAmount,
+        dueAt: r.nextExpected,
+      });
+    }
+
+    obligations.sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime());
+    return obligations.slice(0, 4);
+  }
+
+  // Live buffer = (balance) / (weekly avg outflow). Expressed as a percent
+  // of the user's weekly inflow — caps at 100 (full week of cover).
+  private computeLiveBufferPercent(transactions: ScoringTransaction[]): number {
+    const since = new Date();
+    since.setDate(since.getDate() - 28); // last 4 weeks
+    const recent = transactions.filter(
+      (t) => t.createdAt >= since && t.status === 'SUCCESS',
+    );
+    const weeklyInflow =
+      recent
+        .filter((t) => t.direction === 'CREDIT')
+        .reduce((s, t) => s + t.amount, 0) / 4;
+    if (weeklyInflow <= 0) return 0;
+    // We don't have current pocket balances loaded here; use the user's
+    // bank-account balance proxy via transactions (net since the window).
+    const netSinceWindow = recent.reduce(
+      (s, t) => s + (t.direction === 'CREDIT' ? t.amount : -t.amount),
+      0,
+    );
+    const buffer = Math.max(0, netSinceWindow);
+    return Math.min(100, Math.round((buffer / weeklyInflow) * 100));
+  }
+
+  // Without a chatId, wipes every chat for the user (legacy "clear all"
+  // behavior). With a chatId, wipes just that chat's messages but keeps the
+  // chat row so the user can keep posting into it.
+  async clearMessages(chatId: string | undefined, req: CustomRequest) {
+    const auth = this.requireAuth(req);
+    if (chatId) {
+      await this.assertChatOwned(chatId, auth.id);
+      const deleted = await this.prismaService.copilotMessages.deleteMany({
+        where: { chatId },
+      });
+      return new BaseResponse({ deleted: deleted.count });
+    }
     const deleted = await this.prismaService.copilotMessages.deleteMany({
       where: { userId: auth.id },
     });
+    await this.prismaService.copilotChats.deleteMany({
+      where: { userId: auth.id },
+    });
     return new BaseResponse({ deleted: deleted.count });
+  }
+
+  private async findMostRecentChat(userId: string) {
+    return this.prismaService.copilotChats.findFirst({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  private async assertChatOwned(chatId: string, userId: string) {
+    const chat = await this.prismaService.copilotChats.findUnique({
+      where: { id: chatId },
+    });
+    if (!chat || chat.userId !== userId) {
+      throw new NotFoundException('Chat not found');
+    }
+    return chat;
+  }
+
+  // Bump updatedAt so the chat sorts to the top of the list, and seed the
+  // title from the first user message when the user hasn't set one.
+  private async touchChat(chatId: string, firstUserContent: string) {
+    const chat = await this.prismaService.copilotChats.findUnique({
+      where: { id: chatId },
+      include: { _count: { select: { messages: true } } },
+    });
+    if (!chat) return;
+    const isPlaceholderTitle =
+      chat.title === 'New chat' || chat.title === 'Default';
+    // _count.messages includes the user turn we just inserted, so 1 = first.
+    const shouldRetitle = isPlaceholderTitle && chat._count.messages === 1;
+    await this.prismaService.copilotChats.update({
+      where: { id: chatId },
+      data: {
+        updatedAt: new Date(),
+        ...(shouldRetitle
+          ? { title: this.deriveTitle(firstUserContent) }
+          : {}),
+      },
+    });
+  }
+
+  private deriveTitle(content: string): string {
+    const trimmed = content.replace(/\s+/g, ' ').trim();
+    if (!trimmed) return 'New chat';
+    return trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed;
+  }
+
+  private toChatDTO(
+    c: { id: string; title: string; createdAt: Date; updatedAt: Date },
+    messageCount: number,
+  ): CopilotChatDTO {
+    return {
+      id: c.id,
+      title: c.title,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      messageCount,
+    };
   }
 
   // Snapshot lives in the system prompt's second block (uncached). Keep it

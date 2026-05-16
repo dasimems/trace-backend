@@ -21,8 +21,9 @@ import {
   SENDGRID_API_KEY,
   SENDGRID_SENDER_EMAIL,
   SENDGRID_SENDER_NAME,
-  ANTHROPIC_API_KEY,
-  ANTHROPIC_MODEL,
+  LLM_API_KEY,
+  LLM_BASE_URL,
+  LLM_MODEL,
   APPLE_CLIENT_ID,
   GOOGLE_CLIENT_ID,
   SQUAD_BASE_URL,
@@ -214,18 +215,20 @@ export const validationSchema = Joi.object({
       'string.pattern.base': `${SQUAD_BENEFICIARY_ACCOUNT} must be a 10-digit GTBank account number.`,
       'string.length': `${SQUAD_BENEFICIARY_ACCOUNT} must be exactly 10 digits.`,
     }),
-  [ANTHROPIC_API_KEY]: Joi.string()
+  // LLM config — any OpenAI-compatible provider. Defaults target OpenAI.
+  // Optional: when LLM_API_KEY is blank, insights endpoints fall back to
+  // deterministic copy and the copilot returns 503.
+  [LLM_API_KEY]: Joi.string()
     .optional()
     .allow('')
-    .label(ANTHROPIC_API_KEY)
-    .messages({
-      // Optional — if missing, the insights module falls back to deterministic
-      // narrative copy. Set this to enable Claude-generated summaries and
-      // recommendation phrasing.
-    }),
-  [ANTHROPIC_MODEL]: Joi.string()
-    .default('claude-sonnet-4-6')
-    .label(ANTHROPIC_MODEL),
+    .label(LLM_API_KEY),
+  [LLM_BASE_URL]: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .default('https://api.openai.com/v1')
+    .label(LLM_BASE_URL),
+  [LLM_MODEL]: Joi.string()
+    .default('gpt-4o-mini')
+    .label(LLM_MODEL),
   // OAuth client IDs are the `aud` claim on ID tokens from each provider.
   // Both optional — if missing, the corresponding /auth/oauth/<provider>
   // endpoint returns 503 instead of crashing.

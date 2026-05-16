@@ -47,6 +47,14 @@ export class InvestmentProductDTO {
       'Personalized one-sentence rationale for THIS user (Claude-generated).',
   })
   aiRationale?: string;
+
+  @ApiProperty({
+    type: String,
+    required: false,
+    description:
+      'Prose "honest read" risk write-up. Static per product; seeded by the dev module.',
+  })
+  riskNarrative?: string;
 }
 
 export class InvestmentAllocationDTO {

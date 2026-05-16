@@ -21,6 +21,7 @@ import {
   SpendingBreakdownResponseDTO,
 } from '@common/response/analysis/analysis.dto';
 import { ApiOkResponseData } from '@common/response/api-response.decorator';
+import { SpendHeatmapResponseDTO } from '@common/response/analysis/spend-heatmap.dto';
 import { CachedInsightDTO } from '@common/response/insights/cached-insight.dto';
 import {
   AnomaliesResponseDTO,
@@ -33,7 +34,7 @@ import {
 import { EventBusService } from '@common/events/event-bus.service';
 import { routes, subRoutes } from '@shared/variables';
 import { AnalysisJobsService } from './analysis-jobs.service';
-import { WeeksQueryDTO } from './analysis.dto';
+import { DaysQueryDTO, WeeksQueryDTO } from './analysis.dto';
 import { AnalysisService } from './analysis.service';
 import { InsightsService } from './insights.service';
 
@@ -109,6 +110,21 @@ export class AnalysisController {
   // These NEVER block on computation. They return `{ status: "fresh", value,
   // lastUpdated }` if the cache has data, or `{ status: "pending", value:
   // null }` otherwise. To populate the cache, POST /analysis/refresh.
+
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('access-token')
+  @Get(subRoutes.spendHeatmap)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: '7-day × 24-hour spend density grid (default 30 days)',
+    description:
+      'Sparse — cells with no debits are omitted. Powers the SpendingHeatmap card on the transactions page.',
+  })
+  @ApiOkResponseData(SpendHeatmapResponseDTO)
+  spendHeatmap(@Query() query: DaysQueryDTO, @Req() req: CustomRequest) {
+    const auth = this.analysisService.requireAuth(req);
+    return this.analysisService.getSpendHeatmap(auth.id, query.days ?? 30);
+  }
 
   @UseGuards(AuthGuard)
   @ApiBearerAuth('access-token')

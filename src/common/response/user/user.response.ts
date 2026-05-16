@@ -5,6 +5,36 @@ import { UserDetailsDBDto, UserDetailsResponseDTO } from './user.dto';
 
 type ResponseType = UserDetailsResponseDTO | UserDetailsResponseDTO[];
 
+// Mask the middle of a sensitive identifier so the user can still recognize
+// their own value (first 3 / last 2 digits) without exposing the full number.
+// e.g. "12345678901" → "123******01". Short/invalid values are fully masked.
+function maskSensitiveId(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value.length <= 5) return '*'.repeat(value.length);
+  const head = value.slice(0, 3);
+  const tail = value.slice(-2);
+  return `${head}${'*'.repeat(value.length - 5)}${tail}`;
+}
+
+// Phone numbers can be local ("08012345678") or international ("+2348012345678").
+// Same head/tail strategy as IDs.
+function maskPhoneNumber(value: string | null | undefined): string | undefined {
+  return maskSensitiveId(value);
+}
+
+// Preserve the domain so the user knows which mailbox; obscure the local part.
+// e.g. "mangodeveloper@example.com" → "ma***********@example.com".
+// Local parts of 1–2 chars are fully starred.
+function maskEmail(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const at = value.lastIndexOf('@');
+  if (at <= 0) return '*'.repeat(value.length);
+  const local = value.slice(0, at);
+  const domain = value.slice(at);
+  if (local.length <= 2) return `${'*'.repeat(local.length)}${domain}`;
+  return `${local.slice(0, 2)}${'*'.repeat(local.length - 2)}${domain}`;
+}
+
 class UserResponse extends BaseResponse<ResponseType> {
   constructor(data: ResponseType, paginationDetails?: PaginationDetailsDTO) {
     super(data, paginationDetails);
@@ -22,14 +52,14 @@ class UserResponse extends BaseResponse<ResponseType> {
   static constructUserDetails(user: UserDetailsDBDto): UserDetailsResponseDTO {
     return {
       id: user.id,
-      email: user.email,
+      email: maskEmail(user.email),
       name: this.constructUserFullName(user),
       firstName: user.firstName || undefined,
       lastName: user.lastName || undefined,
       middleName: user.middleName || undefined,
-      phoneNumber: user.phoneNumber || undefined,
-      bvn: user.bvn || undefined,
-      nin: user.nin || undefined,
+      phoneNumber: maskPhoneNumber(user.phoneNumber),
+      bvn: maskSensitiveId(user.bvn),
+      nin: maskSensitiveId(user.nin),
       address: user.address || undefined,
       gender: user.gender || undefined,
       category: user.category || undefined,

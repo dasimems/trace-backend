@@ -13,34 +13,37 @@ datasource db {
 }
 
 model Users {
-  id                         String         @id @default(uuid()) @db.Uuid
-  email                      String         @unique @map("email")
-  password                   String         @map("password")
-  isEmailVerified            Boolean        @default(false) @map("is_email_verified")
-  isPhoneNumberVerified      Boolean        @default(false) @map("is_phone_number_verified")
-  isAccountCreationCompleted Boolean        @default(false) @map("is_account_creation_completed")
-  emailVerifiedAt            DateTime?      @map("email_verified_at")
-  phoneNumberVerifiedAt      DateTime?      @map("phone_number_verified_at")
-  createdAt                  DateTime       @default(now()) @map("created_at")
-  updatedAt                  DateTime       @updatedAt @map("updated_at")
-  firstName                  String?        @map("first_name")
-  lastName                   String?        @map("last_name")
-  middleName                 String?        @map("middle_name")
-  dateOfBirth                DateTime?      @map("date_of_birth")
-  bvn                        String?        @unique @map("bvn") @db.VarChar(11)
-  nin                        String?        @unique @map("nin") @db.VarChar(11)
-  phoneNumber                String?        @unique @map("phone_number") @db.VarChar(15)
-  category                   CategoryEnum?  @map("profession")
-  address                    String?        @map("address")
-  gender                     GenderEnum?    @map("gender")
-  role                       RoleEnum       @default(USER) @map("role")
+  id                         String                  @id @default(uuid()) @db.Uuid
+  email                      String                  @unique @map("email")
+  password                   String                  @map("password")
+  isEmailVerified            Boolean                 @default(false) @map("is_email_verified")
+  isPhoneNumberVerified      Boolean                 @default(false) @map("is_phone_number_verified")
+  isAccountCreationCompleted Boolean                 @default(false) @map("is_account_creation_completed")
+  emailVerifiedAt            DateTime?               @map("email_verified_at")
+  phoneNumberVerifiedAt      DateTime?               @map("phone_number_verified_at")
+  createdAt                  DateTime                @default(now()) @map("created_at")
+  updatedAt                  DateTime                @updatedAt @map("updated_at")
+  firstName                  String?                 @map("first_name")
+  lastName                   String?                 @map("last_name")
+  middleName                 String?                 @map("middle_name")
+  dateOfBirth                DateTime?               @map("date_of_birth")
+  bvn                        String?                 @unique @map("bvn") @db.VarChar(11)
+  nin                        String?                 @unique @map("nin") @db.VarChar(11)
+  phoneNumber                String?                 @unique @map("phone_number") @db.VarChar(15)
+  category                   CategoryEnum?           @map("profession")
+  address                    String?                 @map("address")
+  gender                     GenderEnum?             @map("gender")
+  role                       RoleEnum                @default(USER) @map("role")
   bankAccounts               BankAccounts[]
   transactions               Transactions[]
   walletPockets              WalletPockets[]
   loanApplications           LoanApplications[]
   investmentAllocations      InvestmentAllocations[]
   savedOpportunities         SavedOpportunities[]
+  copilotChats               CopilotChats[]
   copilotMessages            CopilotMessages[]
+  virtualCards               VirtualCards[]
+  uploadedDocuments          UserUploadedDocuments[]
 
   @@map("users")
 }
@@ -96,54 +99,55 @@ enum TransactionCategoryEnum {
 }
 
 model BankAccounts {
-  id                   String                  @id @default(uuid()) @db.Uuid
-  accountNumber        String                  @unique @map("account_number") @db.VarChar(10)
-  accountName          String                  @map("account_name")
-  bankCode             String                  @map("bank_code")
-  customerIdentifier   String                  @unique @map("customer_identifier")
-  beneficiaryAccount   String?                 @map("beneficiary_account") @db.VarChar(10)
-  provider             BankAccountProviderEnum @default(SQUAD) @map("provider")
-  balance              Int                     @default(0) @map("balance")
-  createdAt            DateTime                @default(now()) @map("created_at")
-  updatedAt            DateTime                @updatedAt @map("updated_at")
-  userId               String                  @map("user_id") @db.Uuid
+  id                 String                  @id @default(uuid()) @db.Uuid
+  accountNumber      String                  @unique @map("account_number") @db.VarChar(10)
+  accountName        String                  @map("account_name")
+  bankCode           String                  @map("bank_code")
+  customerIdentifier String                  @unique @map("customer_identifier")
+  beneficiaryAccount String?                 @map("beneficiary_account") @db.VarChar(10)
+  provider           BankAccountProviderEnum @default(SQUAD) @map("provider")
+  balance            Int                     @default(0) @map("balance")
+  createdAt          DateTime                @default(now()) @map("created_at")
+  updatedAt          DateTime                @updatedAt @map("updated_at")
+  userId             String                  @map("user_id") @db.Uuid
 
-  user         Users          @relation(fields: [userId], references: [id])
+  user         Users           @relation(fields: [userId], references: [id])
   transactions Transactions[]
   pockets      WalletPockets[]
+  virtualCards VirtualCards[]
 
   @@map("bank_accounts")
 }
 
 model Transactions {
-  id               String                   @id @default(uuid()) @db.Uuid
-  reference        String                   @unique @map("reference")
-  providerReference String?                 @unique @map("provider_reference")
-  direction        TransactionDirectionEnum @map("direction")
-  status           TransactionStatusEnum    @default(PENDING) @map("status")
-  category         TransactionCategoryEnum  @default(OTHER) @map("category")
-  description      String?                  @map("description")
+  id                     String                   @id @default(uuid()) @db.Uuid
+  reference              String                   @unique @map("reference")
+  providerReference      String?                  @unique @map("provider_reference")
+  direction              TransactionDirectionEnum @map("direction")
+  status                 TransactionStatusEnum    @default(PENDING) @map("status")
+  category               TransactionCategoryEnum  @default(OTHER) @map("category")
+  description            String?                  @map("description")
   // Amounts in kobo. `amount` is what hits the user's balance.
-  amount           Int                      @map("amount")
-  fee              Int                      @default(0) @map("fee")
-  principalAmount  Int?                     @map("principal_amount")
-  settledAmount    Int?                     @map("settled_amount")
-  currency         String                   @default("NGN") @map("currency") @db.VarChar(3)
+  amount                 Int                      @map("amount")
+  fee                    Int                      @default(0) @map("fee")
+  principalAmount        Int?                     @map("principal_amount")
+  settledAmount          Int?                     @map("settled_amount")
+  currency               String                   @default("NGN") @map("currency") @db.VarChar(3)
   // Counterparty: filled differently for inbound (sender_*) vs outbound (recipient_*).
-  senderName            String? @map("sender_name")
-  senderAccountNumber   String? @map("sender_account_number") @db.VarChar(20)
-  senderBankCode        String? @map("sender_bank_code")
-  senderBankName        String? @map("sender_bank_name")
-  recipientName         String? @map("recipient_name")
-  recipientAccountNumber String? @map("recipient_account_number") @db.VarChar(20)
-  recipientBankCode     String? @map("recipient_bank_code")
-  recipientBankName     String? @map("recipient_bank_name")
-  remark                String? @map("remark")
-  provider              BankAccountProviderEnum @default(SQUAD) @map("provider")
-  metadata              Json?                    @map("metadata")
-  processedAt           DateTime?                @map("processed_at")
-  createdAt             DateTime                 @default(now()) @map("created_at")
-  updatedAt             DateTime                 @updatedAt @map("updated_at")
+  senderName             String?                  @map("sender_name")
+  senderAccountNumber    String?                  @map("sender_account_number") @db.VarChar(20)
+  senderBankCode         String?                  @map("sender_bank_code")
+  senderBankName         String?                  @map("sender_bank_name")
+  recipientName          String?                  @map("recipient_name")
+  recipientAccountNumber String?                  @map("recipient_account_number") @db.VarChar(20)
+  recipientBankCode      String?                  @map("recipient_bank_code")
+  recipientBankName      String?                  @map("recipient_bank_name")
+  remark                 String?                  @map("remark")
+  provider               BankAccountProviderEnum  @default(SQUAD) @map("provider")
+  metadata               Json?                    @map("metadata")
+  processedAt            DateTime?                @map("processed_at")
+  createdAt              DateTime                 @default(now()) @map("created_at")
+  updatedAt              DateTime                 @updatedAt @map("updated_at")
 
   accountId String @map("account_id") @db.Uuid
   userId    String @map("user_id") @db.Uuid
@@ -171,17 +175,17 @@ enum WalletPocketTypeEnum {
 }
 
 model WalletPockets {
-  id          String               @id @default(uuid()) @db.Uuid
-  name        String               @map("name")
-  type        WalletPocketTypeEnum @map("type")
-  balance     Int                  @default(0) @map("balance")
-  targetAmount Int?                @map("target_amount")
+  id           String               @id @default(uuid()) @db.Uuid
+  name         String               @map("name")
+  type         WalletPocketTypeEnum @map("type")
+  balance      Int                  @default(0) @map("balance")
+  targetAmount Int?                 @map("target_amount")
   // Soft-locks the default Spend pocket so the user can't delete it.
-  isDefault   Boolean              @default(false) @map("is_default")
-  accountId   String               @map("account_id") @db.Uuid
-  userId      String               @map("user_id") @db.Uuid
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
+  isDefault    Boolean              @default(false) @map("is_default")
+  accountId    String               @map("account_id") @db.Uuid
+  userId       String               @map("user_id") @db.Uuid
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
 
   user        Users        @relation(fields: [userId], references: [id])
   bankAccount BankAccounts @relation(fields: [accountId], references: [id])
@@ -215,27 +219,54 @@ enum LoanApplicationStatusEnum {
   DEFAULTED
 }
 
+// How often the auto-deduction cron sweeps an installment.
+// BULLET = single end-of-tenor installment (typical for salary advances).
+enum LoanRepaymentCadenceEnum {
+  DAILY
+  WEEKLY
+  MONTHLY
+  BULLET
+}
+
+// PENDING = scheduled, due date in the future.
+// DUE     = due date reached, partially paid OR not yet attempted.
+// PAID    = fully settled.
+enum LoanRepaymentStatusEnum {
+  PENDING
+  DUE
+  PAID
+}
+
 model LoanProducts {
-  id                String              @id @default(uuid()) @db.Uuid
-  name              String              @map("name")
-  provider          String              @map("provider")
-  type              LoanProductTypeEnum @map("type")
+  id                    String              @id @default(uuid()) @db.Uuid
+  name                  String              @map("name")
+  provider              String              @map("provider")
+  type                  LoanProductTypeEnum @map("type")
   // Annual interest rate as basis points (e.g. 2400 = 24%). Integer math
   // beats Float for currency.
-  interestRateBps   Int                 @map("interest_rate_bps")
-  minAmount         Int                 @map("min_amount") // kobo
-  maxAmount         Int                 @map("max_amount") // kobo
-  minTenorDays      Int                 @map("min_tenor_days")
-  maxTenorDays      Int                 @map("max_tenor_days")
-  requiredTier      LoanTierEnum        @map("required_tier")
-  description       String              @map("description")
+  interestRateBps       Int                 @map("interest_rate_bps")
+  minAmount             Int                 @map("min_amount") // kobo
+  maxAmount             Int                 @map("max_amount") // kobo
+  minTenorDays          Int                 @map("min_tenor_days")
+  maxTenorDays          Int                 @map("max_tenor_days")
+  // Drives the auto-deduction schedule. Existing rows default to WEEKLY.
+  repaymentCadence      LoanRepaymentCadenceEnum @default(WEEKLY) @map("repayment_cadence")
+  requiredTier          LoanTierEnum        @map("required_tier")
+  description           String              @map("description")
+  // Free-form prose for the "honest read" risk write-up on the detail page.
+  riskNarrative         String?             @map("risk_narrative")
+  // Templates for the opportunity detail screens. Shapes are documented in
+  // the application-level JSON schemas (see common/response/opportunities/).
+  faqEntries            Json?               @map("faq_entries")
+  requiredDocuments     Json?               @map("required_documents")
+  costBreakdownTemplate Json?               @map("cost_breakdown_template")
   // Active products show up in /loans/products; inactive don't, but past
   // applications can still reference them.
-  isActive          Boolean             @default(true) @map("is_active")
-  createdAt         DateTime            @default(now()) @map("created_at")
-  updatedAt         DateTime            @updatedAt @map("updated_at")
+  isActive              Boolean             @default(true) @map("is_active")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
 
-  applications      LoanApplications[]
+  applications LoanApplications[]
 
   @@map("loan_products")
 }
@@ -246,20 +277,54 @@ model LoanApplications {
   userId          String                    @map("user_id") @db.Uuid
   requestedAmount Int                       @map("requested_amount") // kobo
   approvedAmount  Int?                      @map("approved_amount")
+  // Cached on the application so the schedule stays stable even if the
+  // product's interest rate is later edited.
+  interestRateBps Int?                      @map("interest_rate_bps")
+  totalInterest   Int?                      @map("total_interest") // kobo
+  totalRepayment  Int?                      @map("total_repayment") // kobo
   tenorDays       Int                       @map("tenor_days")
   status          LoanApplicationStatusEnum @default(PENDING) @map("status")
   rejectionReason String?                   @map("rejection_reason")
   decisionedAt    DateTime?                 @map("decisioned_at")
   disbursedAt     DateTime?                 @map("disbursed_at")
   dueAt           DateTime?                 @map("due_at")
+  // Set when every repayment row hits PAID. Distinct from `dueAt` (the planned
+  // final installment date) so we can tell early payoffs from on-time payoffs.
+  repaidAt        DateTime?                 @map("repaid_at")
   createdAt       DateTime                  @default(now()) @map("created_at")
   updatedAt       DateTime                  @updatedAt @map("updated_at")
 
-  product LoanProducts @relation(fields: [productId], references: [id])
-  user    Users        @relation(fields: [userId], references: [id])
+  product    LoanProducts     @relation(fields: [productId], references: [id])
+  user       Users            @relation(fields: [userId], references: [id])
+  repayments LoanRepayments[]
 
   @@index([userId, status])
   @@map("loan_applications")
+}
+
+// One row per planned installment. The auto-deduction cron sweeps the user's
+// account every cycle: due rows are paid first in sequence order, partial
+// debits are recorded against `paidAmount` and the remainder carries forward
+// until the row is PAID.
+model LoanRepayments {
+  id              String                  @id @default(uuid()) @db.Uuid
+  applicationId   String                  @map("application_id") @db.Uuid
+  sequence        Int                     @map("sequence") // 1-based
+  dueAt           DateTime                @map("due_at")
+  principalAmount Int                     @map("principal_amount") // kobo
+  interestAmount  Int                     @map("interest_amount") // kobo
+  totalAmount     Int                     @map("total_amount") // kobo (principal + interest)
+  paidAmount      Int                     @default(0) @map("paid_amount") // kobo
+  status          LoanRepaymentStatusEnum @default(PENDING) @map("status")
+  paidAt          DateTime?               @map("paid_at")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+
+  application LoanApplications @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, sequence])
+  @@index([dueAt, status])
+  @@map("loan_repayments")
 }
 
 // ─── Investments ──────────────────────────────────────────────────────────
@@ -288,38 +353,86 @@ enum InvestmentAllocationStatusEnum {
 }
 
 model InvestmentProducts {
-  id                     String                    @id @default(uuid()) @db.Uuid
-  name                   String                    @map("name")
-  provider               String                    @map("provider")
-  type                   InvestmentProductTypeEnum @map("type")
+  id                    String                    @id @default(uuid()) @db.Uuid
+  name                  String                    @map("name")
+  provider              String                    @map("provider")
+  type                  InvestmentProductTypeEnum @map("type")
   // Expected annual return as basis points (e.g. 1320 = 13.2%).
-  expectedReturnBps      Int                       @map("expected_return_bps")
-  riskLevel              RiskLevelEnum             @map("risk_level")
-  minAmount              Int                       @map("min_amount") // kobo
+  expectedReturnBps     Int                       @map("expected_return_bps")
+  riskLevel             RiskLevelEnum             @map("risk_level")
+  minAmount             Int                       @map("min_amount") // kobo
   // Null = open-ended (no lock-up).
-  tenorDays              Int?                      @map("tenor_days")
-  description            String                    @map("description")
-  isActive               Boolean                   @default(true) @map("is_active")
-  createdAt              DateTime                  @default(now()) @map("created_at")
-  updatedAt              DateTime                  @updatedAt @map("updated_at")
+  tenorDays             Int?                      @map("tenor_days")
+  description           String                    @map("description")
+  riskNarrative         String?                   @map("risk_narrative")
+  // JSON shapes documented in common/response/investments/.
+  sectorAllocation      Json?                     @map("sector_allocation")
+  faqEntries            Json?                     @map("faq_entries")
+  requiredDocuments     Json?                     @map("required_documents")
+  costBreakdownTemplate Json?                     @map("cost_breakdown_template")
+  isActive              Boolean                   @default(true) @map("is_active")
+  createdAt             DateTime                  @default(now()) @map("created_at")
+  updatedAt             DateTime                  @updatedAt @map("updated_at")
 
-  allocations InvestmentAllocations[]
+  allocations   InvestmentAllocations[]
+  navHistory    InvestmentNavHistory[]
+  distributions InvestmentDistributions[]
 
   @@map("investment_products")
 }
 
+enum InvestmentDistributionTypeEnum {
+  DIVIDEND
+  INTEREST
+  CAPITAL_GAIN
+}
+
+// One row per product per date — drives the performance chart on the
+// investment detail page. Seeded by the dev module (we don't have a real
+// market data feed wired).
+model InvestmentNavHistory {
+  id         String   @id @default(uuid()) @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  date       DateTime @map("date") @db.Date
+  navPerUnit Int      @map("nav_per_unit") // kobo
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  product InvestmentProducts @relation(fields: [productId], references: [id])
+
+  @@unique([productId, date])
+  @@index([productId, date])
+  @@map("investment_nav_history")
+}
+
+// Payouts the fund made over time — populates the "Recent distributions"
+// card. Seeded.
+model InvestmentDistributions {
+  id            String                         @id @default(uuid()) @db.Uuid
+  productId     String                         @map("product_id") @db.Uuid
+  paidAt        DateTime                       @map("paid_at")
+  amountPerUnit Int                            @map("amount_per_unit") // kobo
+  totalPaid     Int                            @map("total_paid") // kobo (across the fund)
+  type          InvestmentDistributionTypeEnum @map("type")
+  createdAt     DateTime                       @default(now()) @map("created_at")
+
+  product InvestmentProducts @relation(fields: [productId], references: [id])
+
+  @@index([productId, paidAt])
+  @@map("investment_distributions")
+}
+
 model InvestmentAllocations {
-  id              String                         @id @default(uuid()) @db.Uuid
-  productId       String                         @map("product_id") @db.Uuid
-  userId          String                         @map("user_id") @db.Uuid
-  amount          Int                            @map("amount") // kobo at allocation time
-  currentValue    Int                            @map("current_value") // kobo (updated when yields are credited)
-  status          InvestmentAllocationStatusEnum @default(PENDING) @map("status")
-  allocatedAt     DateTime?                      @map("allocated_at")
-  withdrawnAt     DateTime?                      @map("withdrawn_at")
-  maturesAt       DateTime?                      @map("matures_at")
-  createdAt       DateTime                       @default(now()) @map("created_at")
-  updatedAt       DateTime                       @updatedAt @map("updated_at")
+  id           String                         @id @default(uuid()) @db.Uuid
+  productId    String                         @map("product_id") @db.Uuid
+  userId       String                         @map("user_id") @db.Uuid
+  amount       Int                            @map("amount") // kobo at allocation time
+  currentValue Int                            @map("current_value") // kobo (updated when yields are credited)
+  status       InvestmentAllocationStatusEnum @default(PENDING) @map("status")
+  allocatedAt  DateTime?                      @map("allocated_at")
+  withdrawnAt  DateTime?                      @map("withdrawn_at")
+  maturesAt    DateTime?                      @map("matures_at")
+  createdAt    DateTime                       @default(now()) @map("created_at")
+  updatedAt    DateTime                       @updatedAt @map("updated_at")
 
   product InvestmentProducts @relation(fields: [productId], references: [id])
   user    Users              @relation(fields: [userId], references: [id])
@@ -339,18 +452,21 @@ enum OpportunityKindEnum {
 }
 
 model Grants {
-  id              String              @id @default(uuid()) @db.Uuid
-  kind            OpportunityKindEnum @map("kind")
-  title           String              @map("title")
-  provider        String              @map("provider")
-  description     String              @map("description")
-  awardAmount     Int                 @map("award_amount") // kobo (max)
-  deadline        DateTime?           @map("deadline")
-  eligibility     String              @map("eligibility")
-  applicationUrl  String?             @map("application_url")
-  isActive        Boolean             @default(true) @map("is_active")
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
+  id                String              @id @default(uuid()) @db.Uuid
+  kind              OpportunityKindEnum @map("kind")
+  title             String              @map("title")
+  provider          String              @map("provider")
+  description       String              @map("description")
+  awardAmount       Int                 @map("award_amount") // kobo (max)
+  deadline          DateTime?           @map("deadline")
+  eligibility       String              @map("eligibility")
+  applicationUrl    String?             @map("application_url")
+  // Grants don't have a cost breakdown — only documents + FAQ apply.
+  faqEntries        Json?               @map("faq_entries")
+  requiredDocuments Json?               @map("required_documents")
+  isActive          Boolean             @default(true) @map("is_active")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
 
   @@map("grants")
 }
@@ -385,15 +501,108 @@ enum CopilotRoleEnum {
   ASSISTANT
 }
 
+// Each user starts with one default chat; additional chats can be created so
+// the user can keep unrelated contexts separate. Deleting a chat cascades to
+// its messages. If the user deletes every chat, the next POST auto-creates a
+// fresh default.
+model CopilotChats {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  title     String   @default("New chat") @map("title")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     Users             @relation(fields: [userId], references: [id])
+  messages CopilotMessages[]
+
+  @@index([userId, updatedAt])
+  @@map("copilot_chats")
+}
+
 model CopilotMessages {
   id        String          @id @default(uuid()) @db.Uuid
   userId    String          @map("user_id") @db.Uuid
+  chatId    String          @map("chat_id") @db.Uuid
   role      CopilotRoleEnum @map("role")
   content   String          @map("content")
   createdAt DateTime        @default(now()) @map("created_at")
 
-  user Users @relation(fields: [userId], references: [id])
+  user Users        @relation(fields: [userId], references: [id])
+  chat CopilotChats @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([chatId, createdAt])
   @@map("copilot_messages")
+}
+
+// ─── Virtual cards ────────────────────────────────────────────────────────
+// Not actually issued — Squad doesn't have a card-issuing API in our stack.
+// Treated as a UI-only surface; dev seeder mints one card per user on demand
+// so VirtualCardPreview has real data to render.
+
+enum VirtualCardBrandEnum {
+  VISA
+  VERVE
+  MASTERCARD
+}
+
+enum VirtualCardStatusEnum {
+  ACTIVE
+  FROZEN
+  TERMINATED
+}
+
+model VirtualCards {
+  id                String                @id @default(uuid()) @db.Uuid
+  userId            String                @map("user_id") @db.Uuid
+  accountId         String                @map("account_id") @db.Uuid
+  last4             String                @map("last4") @db.VarChar(4)
+  brand             VirtualCardBrandEnum  @map("brand")
+  expMonth          Int                   @map("exp_month")
+  expYear           Int                   @map("exp_year")
+  status            VirtualCardStatusEnum @default(ACTIVE) @map("status")
+  spendLimitMonthly Int                   @map("spend_limit_monthly") // kobo
+  // Snapshot value. We don't link card transactions to cards (no real card
+  // processor), so this is updated on a best-effort basis by the dev seeder.
+  spentThisMonth    Int                   @default(0) @map("spent_this_month")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  user        Users        @relation(fields: [userId], references: [id])
+  bankAccount BankAccounts @relation(fields: [accountId], references: [id])
+
+  @@index([userId])
+  @@map("virtual_cards")
+}
+
+// ─── Required-document uploads ────────────────────────────────────────────
+// Per-user record of which document templates (defined on
+// LoanProducts/InvestmentProducts/Grants as requiredDocuments JSON) the user
+// has marked uploaded. The actual file lives in Cloudinary; this row tracks
+// the metadata + the link.
+
+enum UploadedDocumentCategoryEnum {
+  IDENTITY
+  BUSINESS
+  FINANCIAL
+  COLLATERAL
+  OTHER
+}
+
+model UserUploadedDocuments {
+  id            String                       @id @default(uuid()) @db.Uuid
+  userId        String                       @map("user_id") @db.Uuid
+  source        OpportunitySourceEnum        @map("source")
+  opportunityId String                       @map("opportunity_id") @db.Uuid
+  documentKey   String                       @map("document_key")
+  category      UploadedDocumentCategoryEnum @map("category")
+  fileUrl       String?                      @map("file_url")
+  fileName      String?                      @map("file_name")
+  uploadedAt    DateTime                     @default(now()) @map("uploaded_at")
+
+  user Users @relation(fields: [userId], references: [id])
+
+  @@unique([userId, source, opportunityId, documentKey])
+  @@index([userId, source, opportunityId])
+  @@map("user_uploaded_documents")
 }

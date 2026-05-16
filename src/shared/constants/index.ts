@@ -26,8 +26,13 @@ export const MEMORY_CACHE = 'MEMORY_CACHE',
   SQUAD_SECRET_KEY = 'SQUAD_SECRET_KEY',
   SQUAD_BASE_URL = 'SQUAD_BASE_URL',
   SQUAD_BENEFICIARY_ACCOUNT = 'SQUAD_BENEFICIARY_ACCOUNT',
-  ANTHROPIC_API_KEY = 'ANTHROPIC_API_KEY',
-  ANTHROPIC_MODEL = 'ANTHROPIC_MODEL',
+  // Generic LLM config — works with any OpenAI-compatible endpoint:
+  // OpenAI, OpenRouter, Groq, Together, local Ollama, Anthropic's OpenAI
+  // compat shim, etc. Set LLM_BASE_URL to the provider's /v1 root and
+  // LLM_MODEL to whatever model string that provider accepts.
+  LLM_API_KEY = 'LLM_API_KEY',
+  LLM_BASE_URL = 'LLM_BASE_URL',
+  LLM_MODEL = 'LLM_MODEL',
   GOOGLE_CLIENT_ID = 'GOOGLE_CLIENT_ID',
   APPLE_CLIENT_ID = 'APPLE_CLIENT_ID',
   QUERY_LIMIT = 20,

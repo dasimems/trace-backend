@@ -21,6 +21,7 @@ import {
   LoanAffordabilityResponseDTO,
   LoanApplicationDTO,
   LoanProductDTO,
+  LoanScheduleResponseDTO,
   LoanTierResponseDTO,
 } from '@common/response/loans/loans.dto';
 import { routes, subRoutes } from '@shared/variables';
@@ -107,5 +108,20 @@ export class LoansController {
     @Req() req: CustomRequest,
   ) {
     return this.loansService.getApplication(id, req);
+  }
+
+  @Get(`${subRoutes.applications}/:id${subRoutes.schedule}`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Get the full repayment schedule for a loan',
+    description:
+      'Returns every installment row, with paid/outstanding amounts and status. The auto-deduction cron sweeps DUE rows on each cycle, partial-debiting when the user balance is short.',
+  })
+  @ApiOkResponseData(LoanScheduleResponseDTO)
+  getSchedule(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: CustomRequest,
+  ) {
+    return this.loansService.getSchedule(id, req);
   }
 }

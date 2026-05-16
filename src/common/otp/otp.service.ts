@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import Keyv from 'keyv';
 import { EncryptionService } from '../encryption/encryption.service';
 import { ConfigService } from '@nestjs/config';
@@ -15,6 +15,7 @@ import { VerificationType } from '../../shared/enums/enums';
 
 @Injectable()
 export class OtpService {
+  private readonly logger = new Logger(OtpService.name);
   private secretKey: string;
   private hashKey: string;
   private hashSalt: string;
@@ -108,18 +109,34 @@ export class OtpService {
       token: encryptedCode,
       expiresAt: new Date(Date.now() + this.otpTTL),
     };
-    if (verificationType === VerificationType.EMAIL_VERIFICATION) {
-      await this.emailService.sendEmailVerificationOTPEmail(email, otp, name);
-      return dataToReturn;
+
+    // In non-production environments, surface the OTP in the server log so
+    // developers (and hackathon demos) can complete the flow without a real
+    // SendGrid key. NEVER log in production — the OTP is a credential.
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.warn(
+        `[DEV ONLY] OTP for ${email} (${verificationType}): ${otp}`,
+      );
     }
-    if (verificationType === VerificationType.FORGOT_PASSWORD) {
-      await this.emailService.sendPasswordResetOTPEmail(email, otp, name);
-      return dataToReturn;
+
+    // Email delivery is best-effort. Failures (bad SendGrid key, network
+    // hiccup) are logged but don't abort the flow — the token in dataToReturn
+    // is still valid, and the user can grab the OTP from the server log in
+    // development, or retry in production.
+    try {
+      if (verificationType === VerificationType.EMAIL_VERIFICATION) {
+        await this.emailService.sendEmailVerificationOTPEmail(email, otp, name);
+      } else if (verificationType === VerificationType.FORGOT_PASSWORD) {
+        await this.emailService.sendPasswordResetOTPEmail(email, otp, name);
+      } else if (verificationType === VerificationType.ACCOUNT_CREATION) {
+        await this.emailService.sendAccountCreationOTPEmail(email, otp, name);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `OTP email send failed for ${email} (${verificationType}): ${(error as Error).message}`,
+      );
     }
-    if (verificationType === VerificationType.ACCOUNT_CREATION) {
-      await this.emailService.sendAccountCreationOTPEmail(email, otp, name);
-      return dataToReturn;
-    }
+
     return dataToReturn;
   }
 

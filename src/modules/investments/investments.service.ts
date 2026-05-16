@@ -73,8 +73,153 @@ export class InvestmentsService {
       tenorDays: p.tenorDays ?? undefined,
       description: p.description,
       aiRationale: rationales.get(p.id),
+      riskNarrative: p.riskNarrative ?? undefined,
     }));
     return new BaseResponse(response);
+  }
+
+  // ─── Detail endpoints (product detail page) ───────────────────────────
+
+  async getNavHistory(productId: string, period: '1Y' | '3Y' | 'YTD') {
+    const product = await this.prismaService.investmentProducts.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('Product not found.');
+
+    const since = new Date();
+    if (period === 'YTD') {
+      since.setMonth(0, 1);
+      since.setHours(0, 0, 0, 0);
+    } else if (period === '1Y') {
+      since.setFullYear(since.getFullYear() - 1);
+    } else {
+      since.setFullYear(since.getFullYear() - 3);
+    }
+
+    const rows = await this.prismaService.investmentNavHistory.findMany({
+      where: { productId, date: { gte: since } },
+      orderBy: { date: 'asc' },
+    });
+    if (rows.length === 0) {
+      return new BaseResponse({ points: [], totalReturnBps: 0, cagrBps: 0 });
+    }
+
+    const first = rows[0].navPerUnit;
+    const last = rows[rows.length - 1].navPerUnit;
+    const totalReturnBps =
+      first === 0 ? 0 : Math.round(((last - first) / first) * 10_000);
+
+    // CAGR uses the date span of the actual rows we have, not the requested
+    // period — covers the case where seed data is shorter than the period.
+    const spanDays =
+      (rows[rows.length - 1].date.getTime() - rows[0].date.getTime()) /
+      (1000 * 3600 * 24);
+    const years = Math.max(spanDays / 365, 1 / 365);
+    const totalReturn = totalReturnBps / 10_000;
+    const cagrBps = Math.round(
+      (Math.pow(1 + totalReturn, 1 / years) - 1) * 10_000,
+    );
+
+    return new BaseResponse({
+      points: rows.map((r) => ({
+        date: r.date,
+        navPerUnit: r.navPerUnit,
+        returnBps:
+          first === 0
+            ? 0
+            : Math.round(((r.navPerUnit - first) / first) * 10_000),
+      })),
+      totalReturnBps,
+      cagrBps,
+    });
+  }
+
+  async getNavSnapshot(productId: string) {
+    const product = await this.prismaService.investmentProducts.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('Product not found.');
+
+    const latest = await this.prismaService.investmentNavHistory.findFirst({
+      where: { productId },
+      orderBy: { date: 'desc' },
+    });
+    if (!latest) {
+      throw new NotFoundException('No NAV history available for this product.');
+    }
+
+    const yesterday = new Date(latest.date);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dayBefore = await this.prismaService.investmentNavHistory.findFirst({
+      where: { productId, date: { lte: yesterday } },
+      orderBy: { date: 'desc' },
+    });
+    const change24hBps =
+      dayBefore && dayBefore.navPerUnit > 0
+        ? Math.round(
+            ((latest.navPerUnit - dayBefore.navPerUnit) /
+              dayBefore.navPerUnit) *
+              10_000,
+          )
+        : 0;
+
+    const ytdStart = new Date(latest.date.getFullYear(), 0, 1);
+    const ytdFirst = await this.prismaService.investmentNavHistory.findFirst({
+      where: { productId, date: { gte: ytdStart } },
+      orderBy: { date: 'asc' },
+    });
+    const ytdReturnBps =
+      ytdFirst && ytdFirst.navPerUnit > 0
+        ? Math.round(
+            ((latest.navPerUnit - ytdFirst.navPerUnit) /
+              ytdFirst.navPerUnit) *
+              10_000,
+          )
+        : 0;
+
+    return new BaseResponse({
+      navPerUnit: latest.navPerUnit,
+      asOf: latest.date,
+      change24hBps,
+      ytdReturnBps,
+    });
+  }
+
+  async getSectorAllocation(productId: string) {
+    const product = await this.prismaService.investmentProducts.findUnique({
+      where: { id: productId },
+      select: { id: true, sectorAllocation: true },
+    });
+    if (!product) throw new NotFoundException('Product not found.');
+    const slices =
+      (product.sectorAllocation as
+        | Array<{ sector: string; percent: number; amount: number }>
+        | null) ?? [];
+    return new BaseResponse({ slices });
+  }
+
+  async getDistributions(productId: string, limit: number) {
+    const product = await this.prismaService.investmentProducts.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('Product not found.');
+    const rows = await this.prismaService.investmentDistributions.findMany({
+      where: { productId },
+      orderBy: { paidAt: 'desc' },
+      take: Math.min(limit, 50),
+    });
+    return new BaseResponse({
+      distributions: rows.map((r) => ({
+        id: r.id,
+        paidAt: r.paidAt,
+        amountPerUnit: r.amountPerUnit,
+        totalPaid: r.totalPaid,
+        type: r.type,
+      })),
+    });
   }
 
   async getPortfolio(req: CustomRequest) {

@@ -10,7 +10,7 @@ import {
 } from '@prisma/client';
 import Keyv from 'keyv';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
-import { AnthropicService } from '@common/anthropic/anthropic.service';
+import { LlmService } from '@common/llm/llm.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -54,7 +54,7 @@ export class InsightsService {
 
   constructor(
     private readonly prismaService: PrismaService,
-    private readonly anthropicService: AnthropicService,
+    private readonly llmService: LlmService,
     @Inject(REDIS_CACHE) private readonly redisCache: Keyv,
   ) {}
 
@@ -216,8 +216,8 @@ export class InsightsService {
     let bullets: SummaryBulletDTO[] = [];
     let aiGenerated = false;
 
-    if (this.anthropicService.isEnabled()) {
-      const parsed = await this.anthropicService.generateJson<{
+    if (this.llmService.isEnabled()) {
+      const parsed = await this.llmService.generateJson<{
         bullets?: Array<{ tone: Tone; text: string }>;
       }>({
         systemPrompt: INSIGHTS_SYSTEM_PROMPT,
@@ -264,8 +264,8 @@ export class InsightsService {
     let phrased: RecommendationDTO[] = [];
     let aiGenerated = false;
 
-    if (this.anthropicService.isEnabled()) {
-      const parsed = await this.anthropicService.generateJson<{
+    if (this.llmService.isEnabled()) {
+      const parsed = await this.llmService.generateJson<{
         recommendations?: Array<{
           trigger: string;
           tag: { label: string; tone: Tone };

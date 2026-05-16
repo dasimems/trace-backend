@@ -5,7 +5,7 @@ import {
 } from '@prisma/client';
 import { createHash } from 'crypto';
 import Keyv from 'keyv';
-import { AnthropicService } from '@common/anthropic/anthropic.service';
+import { LlmService } from '@common/llm/llm.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import { computeFinancialHealth } from '@common/scoring/financial-health';
@@ -54,7 +54,7 @@ export class RationaleService {
 
   constructor(
     private readonly prismaService: PrismaService,
-    private readonly anthropicService: AnthropicService,
+    private readonly llmService: LlmService,
     @Inject(REDIS_CACHE) private readonly cache: Keyv,
   ) {}
 
@@ -66,7 +66,7 @@ export class RationaleService {
     products: RationaleProduct[],
   ): Promise<Map<string, string>> {
     if (products.length === 0) return new Map();
-    if (!this.anthropicService.isEnabled()) return new Map();
+    if (!this.llmService.isEnabled()) return new Map();
 
     // Cache key fingerprints the product set so swapping the catalog
     // invalidates the cached rationales.
@@ -93,7 +93,7 @@ export class RationaleService {
       0,
     )}`;
 
-    const parsed = await this.anthropicService.generateJson<{
+    const parsed = await this.llmService.generateJson<{
       rationales?: Array<{ productId: string; text: string }>;
     }>({
       systemPrompt: INSIGHTS_SYSTEM_PROMPT,

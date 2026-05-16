@@ -6,7 +6,7 @@ import appConfig from './config/app.config';
 import { validationSchema } from './config/validation.schema';
 import { ResponseInterceptor } from '@common/response/response.interceptor';
 import { AllExceptionsFilter } from '@common/exceptions/all-exceptions.filter';
-import { AnthropicModule } from '@common/anthropic/anthropic.module';
+import { LlmModule } from '@common/llm/llm.module';
 import { AuthenticationModule } from '@common/authentication/authentication.module';
 import { EventBusModule } from '@common/events/event-bus.module';
 import { InsightsCommonModule } from '@common/insights/insights.module';
@@ -53,7 +53,7 @@ import { WebhooksModule } from '@modules/webhooks/webhooks.module';
         },
       ],
     }),
-    AnthropicModule,
+    LlmModule,
     AuthenticationModule,
     CacheModule,
     EventBusModule,

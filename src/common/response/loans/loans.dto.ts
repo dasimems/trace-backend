@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   LoanApplicationStatusEnum,
   LoanProductTypeEnum,
+  LoanRepaymentStatusEnum,
   LoanTierEnum,
 } from '@prisma/client';
 
@@ -96,6 +97,73 @@ export class LoanAffordabilityResponseDTO {
       'True if the daily payment is ≤30% of the user’s average daily inflow.',
   })
   isAffordable: boolean;
+}
+
+export class LoanRepaymentDTO {
+  @ApiProperty({ type: String })
+  id: string;
+
+  @ApiProperty({ type: Number, description: '1-based installment index' })
+  sequence: number;
+
+  @ApiProperty({ type: Date })
+  dueAt: Date;
+
+  @ApiProperty({ type: Number, description: 'Principal portion in kobo' })
+  principalAmount: number;
+
+  @ApiProperty({ type: Number, description: 'Interest portion in kobo' })
+  interestAmount: number;
+
+  @ApiProperty({ type: Number, description: 'Total planned for this installment in kobo' })
+  totalAmount: number;
+
+  @ApiProperty({ type: Number, description: 'Amount already swept in kobo' })
+  paidAmount: number;
+
+  @ApiProperty({ type: Number, description: 'Remaining owed in kobo' })
+  outstandingAmount: number;
+
+  @ApiProperty({ enum: LoanRepaymentStatusEnum })
+  status: LoanRepaymentStatusEnum;
+
+  @ApiProperty({ type: Date, required: false })
+  paidAt?: Date;
+}
+
+export class LoanScheduleResponseDTO {
+  @ApiProperty({ type: String })
+  applicationId: string;
+
+  @ApiProperty({ enum: LoanApplicationStatusEnum })
+  status: LoanApplicationStatusEnum;
+
+  @ApiProperty({ type: Number, description: 'Disbursed principal in kobo' })
+  principal: number;
+
+  @ApiProperty({ type: Number, description: 'Total interest in kobo' })
+  totalInterest: number;
+
+  @ApiProperty({ type: Number, description: 'Principal + interest in kobo' })
+  totalRepayment: number;
+
+  @ApiProperty({ type: Number, description: 'Sum of paid amounts across installments in kobo' })
+  totalPaid: number;
+
+  @ApiProperty({ type: Number, description: 'Remaining outstanding across the loan in kobo' })
+  totalOutstanding: number;
+
+  @ApiProperty({ type: Date, required: false })
+  disbursedAt?: Date;
+
+  @ApiProperty({ type: Date, required: false })
+  finalDueAt?: Date;
+
+  @ApiProperty({ type: Date, required: false })
+  repaidAt?: Date;
+
+  @ApiProperty({ type: () => [LoanRepaymentDTO] })
+  installments: LoanRepaymentDTO[];
 }
 
 export class LoanApplicationDTO {

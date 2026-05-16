@@ -37,7 +37,7 @@ export class SquadService {
     this.secretKey = key && key.trim() !== '' ? key : undefined;
     this.enabled = !!this.secretKey;
     this.baseUrl = this.configService
-      .get<string>(SQUAD_BASE_URL)!
+      .get<string>(SQUAD_BASE_URL)
       .replace(/\/$/, '');
     const beneficiary = this.configService.get<string>(
       SQUAD_BENEFICIARY_ACCOUNT,
@@ -90,8 +90,7 @@ export class SquadService {
     }
 
     if (!response.ok || !parsed?.success) {
-      const message =
-        parsed?.message || 'Bank service rejected the request.';
+      const message = parsed?.message || 'Bank service rejected the request.';
       this.logger.warn(
         `Squad ${method} ${path} returned ${response.status}: ${message}`,
       );

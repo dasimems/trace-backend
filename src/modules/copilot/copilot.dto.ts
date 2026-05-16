@@ -6,6 +6,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -59,4 +60,51 @@ export class CopilotMessageDTO {
 
   @ApiProperty({ type: Date })
   createdAt: Date;
+}
+
+export class CopilotChatDTO {
+  @ApiProperty({ type: String })
+  id: string;
+
+  @ApiProperty({ type: String })
+  title: string;
+
+  @ApiProperty({ type: Date })
+  createdAt: Date;
+
+  @ApiProperty({ type: Date })
+  updatedAt: Date;
+
+  @ApiProperty({ type: Number, description: 'Number of messages in this chat' })
+  messageCount: number;
+}
+
+export class CopilotChatParamDTO {
+  @ApiProperty({ type: String, format: 'uuid' })
+  @IsUUID()
+  chatId: string;
+}
+
+export class CreateCopilotChatBodyDTO {
+  @ApiProperty({
+    type: String,
+    required: false,
+    description: 'Optional title — auto-generated from the first message if omitted.',
+    maxLength: 120,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  @Transform(toTrimmed, { toClassOnly: true })
+  title?: string;
+}
+
+export class RenameCopilotChatBodyDTO {
+  @ApiProperty({ type: String, maxLength: 120 })
+  @IsString()
+  @IsDefined()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @Transform(toTrimmed, { toClassOnly: true })
+  title: string;
 }

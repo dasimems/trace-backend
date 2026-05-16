@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -9,6 +10,7 @@ import {
 import {
   LoanApplicationStatusEnum,
   LoanTierEnum,
+  TransactionCategoryEnum,
   TransactionDirectionEnum,
   TransactionStatusEnum,
 } from '@prisma/client';
@@ -24,6 +26,8 @@ import {
   LoanAffordabilityResponseDTO,
   LoanApplicationDTO,
   LoanProductDTO,
+  LoanRepaymentDTO,
+  LoanScheduleResponseDTO,
   LoanTierResponseDTO,
 } from '@common/response/loans/loans.dto';
 import { computeFinancialHealth } from '@common/scoring/financial-health';
@@ -34,6 +38,7 @@ import {
   ApplyForLoanBodyDTO,
   GetLoanApplicationsQueryDTO,
 } from './loans.dto';
+import { generateLoanPlan } from './loans.repayment';
 
 const TIER_ORDER: Record<LoanTierEnum, number> = {
   BRONZE: 0,
@@ -248,16 +253,127 @@ export class LoansService {
       );
     }
 
-    const application = await this.prismaService.loanApplications.create({
-      data: {
-        productId: product.id,
-        userId: auth.id,
-        requestedAmount: body.requestedAmount,
-        tenorDays: body.tenorDays,
-        status: LoanApplicationStatusEnum.PENDING,
-      },
+    // The user must have a bank account to receive the disbursement and to be
+    // auto-debited from. Without it the loan has nowhere to land.
+    const account = await this.prismaService.bankAccounts.findFirst({
+      where: { userId: auth.id },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
     });
+    if (!account) {
+      throw new BadRequestException(
+        'You need an active bank account before applying for a loan.',
+      );
+    }
+
+    const disbursedAt = new Date();
+    const plan = generateLoanPlan(
+      product,
+      body.requestedAmount,
+      body.tenorDays,
+      disbursedAt,
+    );
+
+    // Single transaction: create the application + schedule rows, credit the
+    // user's balance, and write the disbursement transaction. Either everything
+    // commits or nothing does — we never want a half-disbursed loan.
+    const application = await this.prismaService.$transaction(async (tx) => {
+      const app = await tx.loanApplications.create({
+        data: {
+          productId: product.id,
+          userId: auth.id,
+          requestedAmount: body.requestedAmount,
+          approvedAmount: body.requestedAmount,
+          interestRateBps: product.interestRateBps,
+          totalInterest: plan.totalInterest,
+          totalRepayment: plan.totalRepayment,
+          tenorDays: body.tenorDays,
+          status: LoanApplicationStatusEnum.DISBURSED,
+          decisionedAt: disbursedAt,
+          disbursedAt,
+          dueAt: plan.finalDueAt,
+        },
+      });
+
+      await tx.loanRepayments.createMany({
+        data: plan.installments.map((i) => ({
+          applicationId: app.id,
+          sequence: i.sequence,
+          dueAt: i.dueAt,
+          principalAmount: i.principalAmount,
+          interestAmount: i.interestAmount,
+          totalAmount: i.totalAmount,
+        })),
+      });
+
+      await tx.bankAccounts.update({
+        where: { id: account.id },
+        data: { balance: { increment: body.requestedAmount } },
+      });
+
+      await tx.transactions.create({
+        data: {
+          reference: `loan-disb-${randomUUID().replace(/-/g, '')}`,
+          direction: TransactionDirectionEnum.CREDIT,
+          status: TransactionStatusEnum.SUCCESS,
+          category: TransactionCategoryEnum.INCOME,
+          description: `${product.name} disbursement`,
+          amount: body.requestedAmount,
+          principalAmount: body.requestedAmount,
+          settledAmount: body.requestedAmount,
+          remark: `Loan disbursed (${product.provider})`,
+          processedAt: disbursedAt,
+          accountId: account.id,
+          userId: auth.id,
+        },
+      });
+
+      return app;
+    });
+
     return new BaseResponse(this.toDTO(application));
+  }
+
+  async getSchedule(applicationId: string, req: CustomRequest) {
+    const auth = this.requireAuth(req);
+    const app = await this.prismaService.loanApplications.findUnique({
+      where: { id: applicationId },
+      include: { repayments: { orderBy: { sequence: 'asc' } } },
+    });
+    if (!app || app.userId !== auth.id) {
+      throw new NotFoundException('Application not found.');
+    }
+    const installments: LoanRepaymentDTO[] = app.repayments.map((r) => ({
+      id: r.id,
+      sequence: r.sequence,
+      dueAt: r.dueAt,
+      principalAmount: r.principalAmount,
+      interestAmount: r.interestAmount,
+      totalAmount: r.totalAmount,
+      paidAmount: r.paidAmount,
+      outstandingAmount: Math.max(0, r.totalAmount - r.paidAmount),
+      status: r.status,
+      paidAt: r.paidAt ?? undefined,
+    }));
+    const totalPaid = installments.reduce((s, i) => s + i.paidAmount, 0);
+    const totalOutstanding = installments.reduce(
+      (s, i) => s + i.outstandingAmount,
+      0,
+    );
+    const response: LoanScheduleResponseDTO = {
+      applicationId: app.id,
+      status: app.status,
+      principal: app.approvedAmount ?? app.requestedAmount,
+      totalInterest: app.totalInterest ?? 0,
+      totalRepayment: app.totalRepayment ?? 0,
+      totalPaid,
+      totalOutstanding,
+      disbursedAt: app.disbursedAt ?? undefined,
+      finalDueAt: app.dueAt ?? undefined,
+      repaidAt: app.repaidAt ?? undefined,
+      installments,
+    };
+    return new BaseResponse(response);
   }
 
   async listApplications(

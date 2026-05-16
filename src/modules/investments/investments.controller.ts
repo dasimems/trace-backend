@@ -3,6 +3,8 @@ import {
   Controller,
   Get,
   HttpCode,
+  Param,
+  ParseUUIDPipe,
   Post,
   Query,
   Req,
@@ -16,13 +18,24 @@ import {
   ApiOkResponseData,
 } from '@common/response/api-response.decorator';
 import {
+  DistributionsResponseDTO,
+  NavHistoryResponseDTO,
+  NavSnapshotDTO,
+  SectorAllocationResponseDTO,
+} from '@common/response/investments/details.dto';
+import {
   InvestmentAllocationDTO,
   InvestmentProductDTO,
   PortfolioResponseDTO,
   SafeToInvestResponseDTO,
 } from '@common/response/investments/investments.dto';
 import { routes, subRoutes } from '@shared/variables';
-import { AllocateBodyDTO, GetAllocationsQueryDTO } from './investments.dto';
+import {
+  AllocateBodyDTO,
+  DistributionsQueryDTO,
+  GetAllocationsQueryDTO,
+  NavHistoryQueryDTO,
+} from './investments.dto';
 import { InvestmentsService } from './investments.service';
 
 @ApiTags('Investments')
@@ -81,5 +94,51 @@ export class InvestmentsController {
     @Req() req: CustomRequest,
   ) {
     return this.investmentsService.listAllocations(query, req);
+  }
+
+  // ─── Product detail panels ────────────────────────────────────────────
+
+  @Get(`${subRoutes.products}/:id${subRoutes.navHistory}`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'NAV history points for the performance chart',
+    description:
+      'Period: 1Y (default), 3Y, or YTD. NAV per unit in kobo. Seeded data — no live market feed wired.',
+  })
+  @ApiOkResponseData(NavHistoryResponseDTO)
+  navHistory(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query() query: NavHistoryQueryDTO,
+  ) {
+    return this.investmentsService.getNavHistory(id, query.period ?? '1Y');
+  }
+
+  @Get(`${subRoutes.products}/:id${subRoutes.nav}`)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Current NAV snapshot + 24h and YTD deltas',
+  })
+  @ApiOkResponseData(NavSnapshotDTO)
+  navSnapshot(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.investmentsService.getNavSnapshot(id);
+  }
+
+  @Get(`${subRoutes.products}/:id${subRoutes.sectorAllocation}`)
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Sector breakdown for the fund' })
+  @ApiOkResponseData(SectorAllocationResponseDTO)
+  sectorAllocation(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.investmentsService.getSectorAllocation(id);
+  }
+
+  @Get(`${subRoutes.products}/:id${subRoutes.distributions}`)
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Recent payouts (newest first)' })
+  @ApiOkResponseData(DistributionsResponseDTO)
+  distributions(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query() query: DistributionsQueryDTO,
+  ) {
+    return this.investmentsService.getDistributions(id, query.limit ?? 12);
   }
 }

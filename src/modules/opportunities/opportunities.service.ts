@@ -12,6 +12,7 @@ import {
   LoanTierEnum,
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import { LlmService } from '@common/llm/llm.service';
 import {
   RationaleProduct,
   RationaleService,
@@ -19,6 +20,7 @@ import {
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
+import { RequiredDocumentDTO } from '@common/response/opportunities/details.dto';
 import { OpportunityDTO } from '@common/response/opportunities/opportunities.dto';
 import { computeFinancialHealth } from '@common/scoring/financial-health';
 import { deriveLoanTier } from '@common/scoring/loan-tier';
@@ -37,6 +39,7 @@ export class OpportunitiesService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly rationaleService: RationaleService,
+    private readonly llmService: LlmService,
   ) {}
 
   private requireAuth(req: CustomRequest) {
@@ -397,5 +400,332 @@ export class OpportunitiesService {
 
   private formatNaira(kobo: number): string {
     return `₦${Math.round(kobo / 100).toLocaleString('en-NG')}`;
+  }
+
+  // ─── Detail endpoints ─────────────────────────────────────────────────
+
+  async simulate(
+    source: OpportunitySourceEnum,
+    id: string,
+    amount: number,
+    tenorDays: number | undefined,
+  ) {
+    if (source === 'LOAN') {
+      const loan = await this.prismaService.loanProducts.findUnique({
+        where: { id },
+      });
+      if (!loan) throw new NotFoundException('Opportunity not found.');
+      const tenor = tenorDays ?? loan.minTenorDays;
+      const annualRate = loan.interestRateBps / 10_000;
+      const totalInterest = Math.round(amount * annualRate * (tenor / 365));
+      const totalRepayment = amount + totalInterest;
+      const dailyPayment = Math.ceil(totalRepayment / tenor);
+      return new BaseResponse({
+        inputAmount: amount,
+        inputTenorDays: tenor,
+        totalRepayment,
+        totalInterest,
+        weeklyPayment: dailyPayment * 7,
+        dailyPayment,
+        // Conservative default — without user context, the FE can re-check
+        // via /loans/affordability for the per-user verdict.
+        isAffordable: dailyPayment <= 30_000_00,
+      });
+    }
+    if (source === 'INVESTMENT') {
+      const inv = await this.prismaService.investmentProducts.findUnique({
+        where: { id },
+      });
+      if (!inv) throw new NotFoundException('Opportunity not found.');
+      const tenor = inv.tenorDays ?? 365;
+      const annualRate = inv.expectedReturnBps / 10_000;
+      const projectedReturn = Math.round(amount * annualRate * (tenor / 365));
+      return new BaseResponse({
+        inputAmount: amount,
+        inputTenorDays: tenor,
+        projectedValue: amount + projectedReturn,
+        projectedReturnBps: inv.expectedReturnBps,
+      });
+    }
+    const grant = await this.prismaService.grants.findUnique({
+      where: { id },
+    });
+    if (!grant) throw new NotFoundException('Opportunity not found.');
+    return new BaseResponse({
+      inputAmount: amount,
+      inputTenorDays: tenorDays ?? 0,
+      eligibilityScore: 60,
+    });
+  }
+
+  async personalized(
+    source: OpportunitySourceEnum,
+    id: string,
+    req: CustomRequest,
+  ) {
+    const auth = this.requireAuth(req);
+    const [transactions, account] = await Promise.all([
+      this.prismaService.transactions.findMany({
+        where: { userId: auth.id },
+        select: TransactionSelect,
+      }),
+      this.prismaService.bankAccounts.findFirst({
+        where: { userId: auth.id },
+        select: { balance: true },
+      }),
+    ]);
+    const health = computeFinancialHealth(
+      transactions as ScoringTransaction[],
+      account?.balance ?? 0,
+    );
+    const tier = deriveLoanTier(health);
+
+    const since = new Date();
+    since.setDate(since.getDate() - 28);
+    const weeklyInflow =
+      transactions
+        .filter(
+          (t) =>
+            t.createdAt >= since &&
+            t.direction === 'CREDIT' &&
+            t.status === 'SUCCESS',
+        )
+        .reduce((s, t) => s + t.amount, 0) / 4;
+
+    let estimatedNetReceived: number | undefined;
+    let estimatedMonthlyCost: number | undefined;
+    let approvalConfidencePercent = 50;
+    let oneLiner = '';
+
+    if (source === 'LOAN') {
+      const loan = await this.prismaService.loanProducts.findUnique({
+        where: { id },
+      });
+      if (!loan) throw new NotFoundException('Opportunity not found.');
+      const principal = Math.min(loan.maxAmount, tier.maxExposure || 0);
+      const tenor = loan.minTenorDays;
+      const totalInterest =
+        principal * (loan.interestRateBps / 10_000) * (tenor / 365);
+      const totalRepayment = principal + totalInterest;
+      // Monthly cost = total repayment spread over the tenor's months.
+      const months = Math.max(1, tenor / 30);
+      estimatedNetReceived = principal;
+      estimatedMonthlyCost = Math.round(totalRepayment / months);
+      approvalConfidencePercent =
+        tier.status === 'ok'
+          ? Math.min(95, 40 + Math.round(health.score / 2))
+          : 30;
+      oneLiner =
+        (await this.aiOneLiner('loan', loan.name, {
+          health_score: health.score,
+          tier: tier.tier,
+          weekly_inflow_kobo: Math.round(weeklyInflow),
+          principal_kobo: principal,
+          monthly_cost_kobo: estimatedMonthlyCost,
+        })) ??
+        `Your ${tier.tier.toLowerCase()} tier unlocks up to ${this.formatNaira(principal)} from this product.`;
+    } else if (source === 'INVESTMENT') {
+      const inv = await this.prismaService.investmentProducts.findUnique({
+        where: { id },
+      });
+      if (!inv) throw new NotFoundException('Opportunity not found.');
+      approvalConfidencePercent =
+        account && account.balance >= inv.minAmount ? 95 : 40;
+      oneLiner =
+        (await this.aiOneLiner('investment', inv.name, {
+          health_score: health.score,
+          balance_kobo: account?.balance ?? 0,
+          min_amount_kobo: inv.minAmount,
+          yield_bps: inv.expectedReturnBps,
+          risk: inv.riskLevel,
+        })) ??
+        `${(inv.expectedReturnBps / 100).toFixed(1)}% p.a. — fits your current risk profile.`;
+    } else {
+      const grant = await this.prismaService.grants.findUnique({
+        where: { id },
+      });
+      if (!grant) throw new NotFoundException('Opportunity not found.');
+      approvalConfidencePercent = 50;
+      oneLiner =
+        (await this.aiOneLiner('grant', grant.title, {
+          award_amount_kobo: grant.awardAmount,
+        })) ?? `Up to ${this.formatNaira(grant.awardAmount)} non-repayable.`;
+      estimatedNetReceived = grant.awardAmount;
+    }
+
+    const weeklyBufferPercent =
+      weeklyInflow > 0 && estimatedMonthlyCost !== undefined
+        ? Math.max(
+            0,
+            100 -
+              Math.round(((estimatedMonthlyCost / 4) / weeklyInflow) * 100),
+          )
+        : undefined;
+
+    return new BaseResponse({
+      estimatedNetReceived,
+      estimatedMonthlyCost,
+      weeklyBufferPercent,
+      approvalConfidencePercent,
+      oneLiner: oneLiner.slice(0, 200),
+    });
+  }
+
+  async costBreakdown(
+    source: OpportunitySourceEnum,
+    id: string,
+    amount: number,
+  ) {
+    if (source === 'GRANT') {
+      return new BaseResponse({
+        items: [],
+        totalUpfront: 0,
+        totalRecurring: 0,
+      });
+    }
+    type Template = Array<{
+      label: string;
+      ratioBps?: number;
+      amountKobo?: number;
+      recurring: boolean;
+    }>;
+    let template: Template = [];
+    let cycle: 'WEEKLY' | 'MONTHLY' | 'DAILY' | undefined;
+
+    if (source === 'LOAN') {
+      const loan = await this.prismaService.loanProducts.findUnique({
+        where: { id },
+      });
+      if (!loan) throw new NotFoundException('Opportunity not found.');
+      template = (loan.costBreakdownTemplate as Template) ?? [];
+      cycle = 'DAILY';
+    } else {
+      const inv = await this.prismaService.investmentProducts.findUnique({
+        where: { id },
+      });
+      if (!inv) throw new NotFoundException('Opportunity not found.');
+      template = (inv.costBreakdownTemplate as Template) ?? [];
+      cycle = 'MONTHLY';
+    }
+
+    const items = template.map((t) => ({
+      label: t.label,
+      amount:
+        t.amountKobo !== undefined
+          ? t.amountKobo
+          : Math.round((amount * (t.ratioBps ?? 0)) / 10_000),
+      recurring: t.recurring,
+    }));
+    const totalUpfront = items
+      .filter((i) => !i.recurring)
+      .reduce((s, i) => s + i.amount, 0);
+    const totalRecurring = items
+      .filter((i) => i.recurring)
+      .reduce((s, i) => s + i.amount, 0);
+    return new BaseResponse({
+      items,
+      totalUpfront,
+      totalRecurring,
+      ...(cycle && totalRecurring > 0 ? { cycle } : {}),
+    });
+  }
+
+  async documents(
+    source: OpportunitySourceEnum,
+    id: string,
+    req: CustomRequest,
+  ) {
+    const auth = this.requireAuth(req);
+    type Template = Array<{
+      id: string;
+      label: string;
+      description: string;
+      required: boolean;
+      category: string;
+    }>;
+    let template: Template = [];
+    if (source === 'LOAN') {
+      const loan = await this.prismaService.loanProducts.findUnique({
+        where: { id },
+        select: { requiredDocuments: true },
+      });
+      if (!loan) throw new NotFoundException('Opportunity not found.');
+      template = (loan.requiredDocuments as Template) ?? [];
+    } else if (source === 'INVESTMENT') {
+      const inv = await this.prismaService.investmentProducts.findUnique({
+        where: { id },
+        select: { requiredDocuments: true },
+      });
+      if (!inv) throw new NotFoundException('Opportunity not found.');
+      template = (inv.requiredDocuments as Template) ?? [];
+    } else {
+      const grant = await this.prismaService.grants.findUnique({
+        where: { id },
+        select: { requiredDocuments: true },
+      });
+      if (!grant) throw new NotFoundException('Opportunity not found.');
+      template = (grant.requiredDocuments as Template) ?? [];
+    }
+
+    const uploaded = await this.prismaService.userUploadedDocuments.findMany({
+      where: { userId: auth.id, source, opportunityId: id },
+      select: { documentKey: true },
+    });
+    const uploadedSet = new Set(uploaded.map((u) => u.documentKey));
+
+    return new BaseResponse({
+      documents: template.map((t) => ({
+        id: t.id,
+        label: t.label,
+        description: t.description,
+        required: t.required,
+        category: t.category as RequiredDocumentDTO['category'],
+        uploaded: uploadedSet.has(t.id),
+      })),
+    });
+  }
+
+  async faq(source: OpportunitySourceEnum, id: string) {
+    let entries: Array<{ question: string; answer: string }> = [];
+    if (source === 'LOAN') {
+      const loan = await this.prismaService.loanProducts.findUnique({
+        where: { id },
+        select: { faqEntries: true },
+      });
+      if (!loan) throw new NotFoundException('Opportunity not found.');
+      entries = (loan.faqEntries as typeof entries) ?? [];
+    } else if (source === 'INVESTMENT') {
+      const inv = await this.prismaService.investmentProducts.findUnique({
+        where: { id },
+        select: { faqEntries: true },
+      });
+      if (!inv) throw new NotFoundException('Opportunity not found.');
+      entries = (inv.faqEntries as typeof entries) ?? [];
+    } else {
+      const grant = await this.prismaService.grants.findUnique({
+        where: { id },
+        select: { faqEntries: true },
+      });
+      if (!grant) throw new NotFoundException('Opportunity not found.');
+      entries = (grant.faqEntries as typeof entries) ?? [];
+    }
+    return new BaseResponse({ entries });
+  }
+
+  // ─── AI one-liner (Claude) ────────────────────────────────────────────
+
+  private async aiOneLiner(
+    productType: 'loan' | 'investment' | 'grant',
+    productName: string,
+    facts: Record<string, unknown>,
+  ): Promise<string | null> {
+    if (!this.llmService.isEnabled()) return null;
+    const text = await this.llmService.generateText({
+      systemPrompt:
+        'You write one-sentence rationales for Nigerian fintech users. Style: direct, no preamble, no emoji, no marketing. Cite actual numbers from the facts. Use ₦ symbol with comma separators. Output ONLY the sentence — no quotes, no headers, no JSON.',
+      userPrompt: `Product type: ${productType}\nProduct: ${productName}\nUser facts: ${JSON.stringify(facts)}\n\nWrite a single sentence (≤140 chars) explaining why this product fits THIS user.`,
+      maxTokens: 100,
+    });
+    return text?.trim().replace(/^["']|["']$/g, '') ?? null;
   }
 }

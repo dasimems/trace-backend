@@ -241,4 +241,66 @@ export class AnalysisService {
     if (!auth) throw new UnauthorizedException('Unauthorized!');
     return auth;
   }
+
+  // Spend density across a 7×24 grid (day-of-week × hour-of-day). Sparse —
+  // only cells with at least one debit are returned. Powers the
+  // SpendingHeatmap card on the transactions page.
+  async getSpendHeatmap(userId: string, days: number) {
+    const rangeEnd = new Date();
+    const rangeStart = new Date(rangeEnd);
+    rangeStart.setDate(rangeStart.getDate() - days);
+
+    const debits = await this.prismaService.transactions.findMany({
+      where: {
+        userId,
+        direction: TransactionDirectionEnum.DEBIT,
+        status: TransactionStatusEnum.SUCCESS,
+        createdAt: { gte: rangeStart, lte: rangeEnd },
+      },
+      select: { amount: true, createdAt: true },
+    });
+
+    type CellKey = `${number}:${number}`;
+    const cells = new Map<CellKey, { amount: number; txCount: number }>();
+    let totalSpend = 0;
+
+    for (const tx of debits) {
+      // JavaScript's getDay returns 0 (Sun) – 6 (Sat). We want 0=Mon, 6=Sun.
+      const jsDay = tx.createdAt.getDay();
+      const dayOfWeek = (jsDay + 6) % 7;
+      const hour = tx.createdAt.getHours();
+      const key: CellKey = `${dayOfWeek}:${hour}`;
+      const existing = cells.get(key) ?? { amount: 0, txCount: 0 };
+      existing.amount += tx.amount;
+      existing.txCount += 1;
+      cells.set(key, existing);
+      totalSpend += tx.amount;
+    }
+
+    const cellArray = Array.from(cells.entries()).map(([key, val]) => {
+      const [d, h] = key.split(':').map(Number);
+      return {
+        dayOfWeek: d as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+        hour: h,
+        amount: val.amount,
+        txCount: val.txCount,
+      };
+    });
+
+    let peakCell: { dayOfWeek: number; hour: number; amount: number } | null =
+      null;
+    for (const c of cellArray) {
+      if (!peakCell || c.amount > peakCell.amount) {
+        peakCell = { dayOfWeek: c.dayOfWeek, hour: c.hour, amount: c.amount };
+      }
+    }
+
+    return new BaseResponse({
+      cells: cellArray,
+      rangeStart,
+      rangeEnd,
+      totalSpend,
+      peakCell,
+    });
+  }
 }

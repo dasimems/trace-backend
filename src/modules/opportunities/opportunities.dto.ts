@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsDefined,
   IsEnum,
   IsInt,
   IsOptional,
@@ -9,6 +10,30 @@ import {
   Min,
 } from 'class-validator';
 import { OpportunitySourceEnum } from '@prisma/client';
+
+export class SimulateQueryDTO {
+  @ApiProperty({
+    type: Number,
+    description: 'Amount in kobo for the simulation.',
+  })
+  @IsDefined()
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  amount: number;
+
+  @ApiProperty({
+    type: Number,
+    description: 'Tenor in days (only used for loans).',
+    required: false,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(730)
+  tenorDays?: number;
+}
 
 export class GetOpportunitiesQueryDTO {
   @ApiProperty({

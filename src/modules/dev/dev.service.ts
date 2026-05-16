@@ -212,10 +212,35 @@ export class DevService {
       data: { balance: { increment: balanceDelta } },
     });
 
+    // Also mint a virtual card if the user doesn't have one yet — keeps
+    // the wallet's VirtualCardPreview meaningful from the first demo run.
+    const existingCard = await this.prismaService.virtualCards.findFirst({
+      where: { userId: auth.id, status: { not: 'TERMINATED' } },
+      select: { id: true },
+    });
+    if (!existingCard) {
+      await this.prismaService.virtualCards.create({
+        data: {
+          userId: auth.id,
+          accountId: account.id,
+          last4: String(1000 + Math.floor(Math.random() * 9000)),
+          brand: 'VERVE',
+          expMonth: 9,
+          expYear: now.getFullYear() + 4,
+          status: 'ACTIVE',
+          spendLimitMonthly: 500_000 * 100,
+          spentThisMonth: Math.round(
+            Math.abs(balanceDelta) * 0.15,
+          ),
+        },
+      });
+    }
+
     return new BaseResponse({
       inserted: rows.length,
       days,
       balanceDeltaKobo: balanceDelta,
+      cardSeeded: !existingCard,
       message:
         'Seed complete. POST /api/v1/analysis/refresh to populate insights from the new data.',
     });
@@ -265,13 +290,48 @@ export class DevService {
     );
     const existingGrantSet = new Set(existingGrants.map(grantKey));
 
+    // Decorate each seed with the JSON template defaults declared below.
+    // Keeps the seed literals readable while still wiring riskNarrative,
+    // faqEntries, requiredDocuments, etc. onto every product.
     const loans = LOAN_PRODUCT_SEEDS.filter(
       (p) => !existingLoanSet.has(loanKey(p)),
-    );
+    ).map((p) => ({
+      ...p,
+      riskNarrative: LOAN_RISK_NARRATIVES[p.type] ?? null,
+      faqEntries: LOAN_FAQ as unknown as object,
+      requiredDocuments: [
+        COMMON_DOCS.nin_slip,
+        COMMON_DOCS.drivers_license,
+        COMMON_DOCS.bank_statement_6mo,
+        ...(p.type === 'BUSINESS' ? [COMMON_DOCS.cac_certificate] : []),
+        COMMON_DOCS.utility_bill,
+      ] as unknown as object,
+      costBreakdownTemplate: LOAN_COST_TEMPLATE as unknown as object,
+    }));
     const investments = INVESTMENT_PRODUCT_SEEDS.filter(
       (p) => !existingInvestmentSet.has(loanKey(p)),
-    );
-    const grants = GRANT_SEEDS.filter((g) => !existingGrantSet.has(grantKey(g)));
+    ).map((p) => ({
+      ...p,
+      riskNarrative: INVESTMENT_RISK_NARRATIVES[p.riskLevel] ?? null,
+      sectorAllocation: SECTOR_ALLOCATIONS[p.type] as unknown as object,
+      faqEntries: INVESTMENT_FAQ as unknown as object,
+      requiredDocuments: [
+        COMMON_DOCS.nin_slip,
+        COMMON_DOCS.bank_statement_6mo,
+      ] as unknown as object,
+      costBreakdownTemplate: INVESTMENT_COST_TEMPLATE as unknown as object,
+    }));
+    const grants = GRANT_SEEDS.filter(
+      (g) => !existingGrantSet.has(grantKey(g)),
+    ).map((g) => ({
+      ...g,
+      faqEntries: GRANT_FAQ as unknown as object,
+      requiredDocuments: [
+        COMMON_DOCS.nin_slip,
+        COMMON_DOCS.cac_certificate,
+        COMMON_DOCS.bank_statement_6mo,
+      ] as unknown as object,
+    }));
 
     const [loanResult, investmentResult, grantResult] = await Promise.all([
       this.prismaService.loanProducts.createMany({ data: loans }),
@@ -279,13 +339,125 @@ export class DevService {
       this.prismaService.grants.createMany({ data: grants }),
     ]);
 
+    // After investments insert, seed NAV history + distributions for any
+    // investment product that doesn't have them yet. This powers the
+    // PerformanceChart + NavPerUnitCard + RecentDistributions panels on
+    // /investments/[id].
+    const navResult = await this.seedInvestmentTimeSeries();
+
     return new BaseResponse({
       loans: loanResult.count,
       investments: investmentResult.count,
       grants: grantResult.count,
+      navHistoryPoints: navResult.navPoints,
+      distributions: navResult.distributions,
       message:
         'Catalog seeded. /loans/products, /investments/products, /opportunities now have data.',
     });
+  }
+
+  // Seeds 365 days of daily NAV history + 12 months of distributions per
+  // active investment product that doesn't already have data. The shape is
+  // believable but illustrative — there's no real market data feed.
+  private async seedInvestmentTimeSeries() {
+    const products = await this.prismaService.investmentProducts.findMany({
+      where: { isActive: true },
+      select: { id: true, expectedReturnBps: true, type: true },
+    });
+    let navPoints = 0;
+    let distributions = 0;
+
+    for (const p of products) {
+      const existing = await this.prismaService.investmentNavHistory.count({
+        where: { productId: p.id },
+      });
+      if (existing > 0) continue;
+
+      const days = 365;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const start = new Date(today);
+      start.setDate(start.getDate() - days);
+
+      // Generate NAV that drifts upward consistent with expectedReturnBps,
+      // plus daily noise sized by the product's risk band.
+      const annualReturn = p.expectedReturnBps / 10_000;
+      const dailyReturn = annualReturn / 365;
+      const dailyVolBps = this.dailyVolatilityForType(p.type);
+
+      let nav = 100_00; // start at ₦100 per unit
+      const rows: Array<{
+        productId: string;
+        date: Date;
+        navPerUnit: number;
+      }> = [];
+      for (let i = 0; i < days; i++) {
+        const date = new Date(start);
+        date.setDate(start.getDate() + i);
+        const noise = ((Math.random() * 2 - 1) * dailyVolBps) / 10_000;
+        nav = Math.max(1, Math.round(nav * (1 + dailyReturn + noise)));
+        rows.push({ productId: p.id, date, navPerUnit: nav });
+      }
+      const created = await this.prismaService.investmentNavHistory.createMany({
+        data: rows,
+        skipDuplicates: true,
+      });
+      navPoints += created.count;
+
+      // 12 monthly distributions matching the implied yield.
+      const distroRows: Array<{
+        productId: string;
+        paidAt: Date;
+        amountPerUnit: number;
+        totalPaid: number;
+        type: 'DIVIDEND' | 'INTEREST' | 'CAPITAL_GAIN';
+      }> = [];
+      const distroType: 'DIVIDEND' | 'INTEREST' | 'CAPITAL_GAIN' =
+        p.type === 'BOND' || p.type === 'TREASURY_BILL' || p.type === 'FIXED_DEPOSIT'
+          ? 'INTEREST'
+          : p.type === 'ETF'
+          ? 'DIVIDEND'
+          : 'INTEREST';
+      for (let m = 11; m >= 0; m--) {
+        const paidAt = new Date(today);
+        paidAt.setMonth(today.getMonth() - m);
+        const amountPerUnit = Math.round((100_00 * annualReturn) / 12);
+        distroRows.push({
+          productId: p.id,
+          paidAt,
+          amountPerUnit,
+          totalPaid: amountPerUnit * 1_000_000, // illustrative AUM
+          type: distroType,
+        });
+      }
+      const createdDistros =
+        await this.prismaService.investmentDistributions.createMany({
+          data: distroRows,
+          skipDuplicates: true,
+        });
+      distributions += createdDistros.count;
+    }
+    return { navPoints, distributions };
+  }
+
+  // Pegged volatility per product type. Low-risk products (T-Bills, FD) hold
+  // their NAV tightly; ETFs swing more. Bps per day.
+  private dailyVolatilityForType(type: string): number {
+    switch (type) {
+      case 'TREASURY_BILL':
+      case 'FIXED_DEPOSIT':
+        return 5;
+      case 'MONEY_MARKET':
+        return 10;
+      case 'BOND':
+        return 20;
+      case 'COOPERATIVE':
+        return 30;
+      case 'ETF':
+        return 80;
+      default:
+        return 20;
+    }
   }
 
   private randomNuban() {
@@ -298,6 +470,169 @@ export class DevService {
 // ─── Catalog seed data ──────────────────────────────────────────────────────
 // Tunable. These are the products surfaced on /loans, /investments, and
 // /opportunities. Replace with real partner products once integrations exist.
+
+// Shared document templates — referenced by ID from per-product requirements.
+const COMMON_DOCS = {
+  drivers_license: {
+    id: 'drivers_license',
+    label: "Driver's licence",
+    description: 'Front + back of a valid Nigerian driver’s licence.',
+    required: true,
+    category: 'IDENTITY' as const,
+  },
+  nin_slip: {
+    id: 'nin_slip',
+    label: 'NIN slip',
+    description: 'National Identification Number slip or NIMC card.',
+    required: true,
+    category: 'IDENTITY' as const,
+  },
+  bank_statement_6mo: {
+    id: 'bank_statement_6mo',
+    label: 'Bank statement (last 6 months)',
+    description: 'PDF statement covering the most recent 6 months.',
+    required: true,
+    category: 'FINANCIAL' as const,
+  },
+  utility_bill: {
+    id: 'utility_bill',
+    label: 'Utility bill',
+    description: 'Recent NEPA / water / cable bill (<3 months old).',
+    required: false,
+    category: 'OTHER' as const,
+  },
+  cac_certificate: {
+    id: 'cac_certificate',
+    label: 'CAC certificate',
+    description: 'Corporate Affairs Commission registration certificate.',
+    required: true,
+    category: 'BUSINESS' as const,
+  },
+  signature_specimen: {
+    id: 'signature_specimen',
+    label: 'Signature specimen',
+    description: 'Signed specimen card.',
+    required: false,
+    category: 'OTHER' as const,
+  },
+};
+
+const LOAN_COST_TEMPLATE = [
+  { label: 'Origination fee', ratioBps: 150, recurring: false }, // 1.5%
+  { label: 'Processing fee', amountKobo: 50_000, recurring: false }, // ₦500
+  { label: 'Insurance', ratioBps: 50, recurring: true }, // 0.5% per cycle
+];
+
+const INVESTMENT_COST_TEMPLATE = [
+  { label: 'Entry fee', amountKobo: 0, recurring: false },
+  { label: 'Management fee', ratioBps: 83, recurring: true }, // ~1% p.a. spread monthly
+];
+
+const LOAN_FAQ = [
+  {
+    question: 'How quickly will I receive the funds?',
+    answer:
+      'Approved loans are disbursed to your Trace wallet within 24 hours, subject to verification.',
+  },
+  {
+    question: 'What happens if I miss a payment?',
+    answer:
+      'A late fee of ₦500 applies after a 3-day grace period. Persistent default reduces your tier.',
+  },
+  {
+    question: 'Can I repay early?',
+    answer: 'Yes — early repayment is free; you save the unaccrued interest.',
+  },
+];
+
+const INVESTMENT_FAQ = [
+  {
+    question: 'Can I withdraw before maturity?',
+    answer:
+      'Open-ended products allow withdrawal anytime. Locked products redeem at maturity; early exit forfeits a portion of interest.',
+  },
+  {
+    question: 'Is my principal protected?',
+    answer:
+      'Risk profile varies by product — see the riskNarrative for the honest read.',
+  },
+  {
+    question: 'How are returns paid?',
+    answer:
+      'Returns are credited to your Trace wallet at maturity (locked products) or daily (money market).',
+  },
+];
+
+const GRANT_FAQ = [
+  {
+    question: 'Is this grant repayable?',
+    answer: 'No — grants are non-repayable subject to compliance with terms.',
+  },
+  {
+    question: 'How long does review take?',
+    answer: 'Most grant decisions are issued within 30–60 days of submission.',
+  },
+];
+
+// Short "honest read" paragraphs per loan product type. Surfaced on the
+// detail page's RiskHonestRead card.
+const LOAN_RISK_NARRATIVES: Record<string, string> = {
+  PERSONAL:
+    'Mid-size personal loans carry default risk if monthly inflow drops. The rate is fair; the tenor flexibility is what makes or breaks affordability — keep daily payments under a third of your daily inflow.',
+  SALARY_ADVANCE:
+    'Short-tenor advances are low-friction but compound quickly if you miss the payday auto-debit. Treat them as one-month bridges, not ongoing credit.',
+  BUSINESS:
+    'Business credit is priced for cashflow-mature traders. The repayment cadence is weekly; ensure your inventory turnover supports it before drawing.',
+  EMERGENCY:
+    'Emergency cash is the most expensive credit on the platform — use it once, repay fast, and migrate to Personal or Salary Advance once your tier improves.',
+};
+
+// Same idea per risk band on investments.
+const INVESTMENT_RISK_NARRATIVES: Record<string, string> = {
+  LOW: 'Principal is effectively protected. Returns track CBN policy rates — modest but consistent. Suitable for emergency reserves and short-term goals.',
+  LOW_MEDIUM:
+    'Mostly fixed-income exposure with limited price volatility. Open-ended liquidity. Reasonable home for a quarter to a third of your investable surplus.',
+  MEDIUM:
+    'Balanced mix of fixed-income + selective equities. Expect modest drawdowns in rough months; long-term return should beat MMF by 200–400 bps.',
+  MEDIUM_HIGH:
+    'Real volatility — single-month moves of 5%+ are normal. Returns can compound powerfully but you need a multi-year horizon to ride out cycles.',
+  HIGH: 'Equity-heavy or sector-concentrated. Capable of 20%+ annual gains but also of 20%+ drawdowns. Only commit money you can leave alone for 3+ years.',
+};
+
+// Illustrative sector splits per product type. Used by the
+// SectorAllocation card on /investments/[id].
+const SECTOR_ALLOCATIONS: Record<
+  string,
+  Array<{ sector: string; percent: number; amount: number }>
+> = {
+  MONEY_MARKET: [
+    { sector: 'T-Bills', percent: 65, amount: 65_000_000_00 },
+    { sector: 'Commercial Paper', percent: 25, amount: 25_000_000_00 },
+    { sector: 'Bank Placements', percent: 10, amount: 10_000_000_00 },
+  ],
+  TREASURY_BILL: [
+    { sector: 'FGN T-Bills', percent: 100, amount: 100_000_000_00 },
+  ],
+  BOND: [
+    { sector: 'FGN Bonds', percent: 60, amount: 60_000_000_00 },
+    { sector: 'Corporate Bonds', percent: 30, amount: 30_000_000_00 },
+    { sector: 'Sub-national Bonds', percent: 10, amount: 10_000_000_00 },
+  ],
+  COOPERATIVE: [
+    { sector: 'Textile traders', percent: 70, amount: 70_000_000_00 },
+    { sector: 'Logistics support', percent: 30, amount: 30_000_000_00 },
+  ],
+  ETF: [
+    { sector: 'Banking', percent: 45, amount: 45_000_000_00 },
+    { sector: 'Consumer goods', percent: 25, amount: 25_000_000_00 },
+    { sector: 'Industrials', percent: 15, amount: 15_000_000_00 },
+    { sector: 'Telecoms', percent: 10, amount: 10_000_000_00 },
+    { sector: 'Cash', percent: 5, amount: 5_000_000_00 },
+  ],
+  FIXED_DEPOSIT: [
+    { sector: 'Term deposit', percent: 100, amount: 100_000_000_00 },
+  ],
+};
 
 const LOAN_PRODUCT_SEEDS: Array<{
   name: string;
