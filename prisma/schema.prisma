@@ -4,7 +4,12 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
+  // No custom `output`: Prisma writes into @prisma/client's own folder, which
+  // is the only location that resolves correctly under both npm's flat layout
+  // and pnpm's symlinked .pnpm/<hash>/node_modules/@prisma/client/ layout.
+  // Overriding `output` to ../node_modules/.prisma/client breaks pnpm because
+  // TypeScript follows the symlink and looks for `.prisma/client/default`
+  // relative to the .pnpm subfolder, not the project root.
 }
 
 datasource db {
