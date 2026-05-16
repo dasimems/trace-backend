@@ -25,6 +25,7 @@ import {
   WalletResponseDTO,
 } from '@common/response/wallet/wallet.dto';
 import { SquadService } from '@common/squad/squad.service';
+import { inferTransferCategory } from './category-inference';
 import { LookupAccountBodyDTO, TransferBodyDTO } from './wallet.dto';
 
 @Injectable()
@@ -146,6 +147,17 @@ export class WalletService {
     const reference = `trace-${randomUUID().replace(/-/g, '')}`;
     const remark = body.remark?.slice(0, 100) || `Transfer to ${body.accountName}`;
 
+    // Category resolution: user pick > merchant heuristic > generic TRANSFER.
+    // The heuristic only fires when the user hasn't told us, so we never
+    // override a deliberate choice.
+    const inferred =
+      body.category ??
+      inferTransferCategory({
+        accountName: body.accountName,
+        remark: body.remark,
+      }) ??
+      TransactionCategoryEnum.TRANSFER;
+
     // 1. Reserve funds by creating a PENDING DEBIT and decrementing balance
     //    inside one transaction. Squad call happens AFTER the row exists so we
     //    never lose money on a crash.
@@ -165,7 +177,7 @@ export class WalletService {
           reference,
           direction: TransactionDirectionEnum.DEBIT,
           status: TransactionStatusEnum.PENDING,
-          category: TransactionCategoryEnum.TRANSFER,
+          category: inferred,
           description: remark,
           amount: body.amount,
           currency: 'NGN',

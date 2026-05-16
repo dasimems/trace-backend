@@ -1,7 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { TransactionCategoryEnum } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsDefined,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -99,4 +101,17 @@ export class TransferBodyDTO {
   @IsString()
   @Transform(toTrimmed, { toClassOnly: true })
   remark?: string;
+
+  @ApiProperty({
+    description:
+      "Optional. What this transfer is for. When omitted, the server infers from the recipient (e.g. Chowdeck → FOOD_AND_DINING) and falls back to TRANSFER.",
+    enum: TransactionCategoryEnum,
+    required: false,
+    example: TransactionCategoryEnum.FOOD_AND_DINING,
+  })
+  @IsOptional()
+  @IsEnum(TransactionCategoryEnum, {
+    message: 'category must be a valid TransactionCategoryEnum value',
+  })
+  category?: TransactionCategoryEnum;
 }
