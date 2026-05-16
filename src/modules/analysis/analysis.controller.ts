@@ -32,6 +32,7 @@ import {
   WeeklySummaryResponseDTO,
 } from '@common/response/insights/insights.dto';
 import { EventBusService } from '@common/events/event-bus.service';
+import { openSseStream } from '@common/events/sse-stream';
 import { routes, subRoutes } from '@shared/variables';
 import { AnalysisJobsService } from './analysis-jobs.service';
 import { DaysQueryDTO, WeeksQueryDTO } from './analysis.dto';
@@ -235,20 +236,7 @@ export class AnalysisController {
   })
   stream(@Req() req: CustomRequest, @Res() res: FastifyReply) {
     const auth = this.insightsService.requireAuth(req);
-    const raw = res.raw;
-
-    // Send headers immediately — some clients won't fire `open` until they
-    // see them, and Fastify defers writing until first body write otherwise.
-    raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-
-    // SSE comment line — ignored by the parser but exercises the pipe so
-    // intermediaries don't drop a "connecting" connection.
-    raw.write(`: connected ${new Date().toISOString()}\n\n`);
+    const raw = openSseStream(req, res);
 
     const unsubscribe = this.eventBus.subscribe(auth.id, (event) => {
       // SSE wire format: each event = `event:` line, `data:` line(s), blank

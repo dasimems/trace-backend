@@ -20,6 +20,7 @@ import type { CustomRequest } from '@common/authentication/authentication.dto';
 import { AuthGuard } from '@common/authentication/authentication.guard';
 import { SseAuthGuard } from '@common/authentication/sse-auth.guard';
 import { EventBusService } from '@common/events/event-bus.service';
+import { openSseStream } from '@common/events/sse-stream';
 import {
   ApiCreatedResponseData,
   ApiOkResponseData,
@@ -89,15 +90,8 @@ export class WalletController {
       res.code(401).send({ message: 'Unauthorized!' });
       return;
     }
-    const raw = res.raw;
 
-    raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    raw.write(`: connected ${new Date().toISOString()}\n\n`);
+    const raw = openSseStream(req, res);
 
     // Filter to wallet.* events so this stream stays focused. Other event
     // namespaces (analysis.*, loan.*, copilot.*) ride their own streams.
@@ -111,7 +105,6 @@ export class WalletController {
       }
     });
 
-    // Heartbeat — proxies routinely kill idle connections at 30–60s.
     const heartbeat = setInterval(() => {
       try {
         raw.write(`: heartbeat ${Date.now()}\n\n`);
@@ -125,6 +118,7 @@ export class WalletController {
       unsubscribe();
     };
     req.raw.on('close', cleanup);
+    req.raw.on('error', cleanup);
   }
 
   // ─── All routes below require the standard Bearer-header AuthGuard. ──────
