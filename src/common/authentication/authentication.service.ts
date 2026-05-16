@@ -121,11 +121,15 @@ export class AuthenticationService {
       }
       return undefined;
     }
-    const userDetails = await this.getAuthSession(req, shouldThrowError);
+    // Look up the session by the token we already verified, NOT by re-reading
+    // the request — SSE auth carries the token in `?token=` (EventSource can't
+    // set headers), which `getUserToken` doesn't know about.
+    const userDetails =
+      await this.redisCache.get<Required<AuthUserDetails>>(token);
 
     if (!userDetails || !payload || userDetails?.id !== payload?.id) {
       if (userDetails) {
-        await this.invalidateAuthSession(req);
+        await this.redisCache.delete(token);
       }
       if (shouldThrowError) {
         throw new UnauthorizedException('Unauthorized!');
