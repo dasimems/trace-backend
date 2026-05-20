@@ -7,9 +7,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { WalletPocketSelect } from '@common/prisma/selects/wallet-pocket.select';
 import BaseResponse from '@common/response/base.response';
+import { WalletPocketDTO } from '@common/response/wallet/pocket.dto';
 import {
   AllocateToPocketBodyDTO,
   CreatePocketBodyDTO,
@@ -17,9 +19,41 @@ import {
   UpdatePocketBodyDTO,
 } from './pocket.dto';
 
+type PocketRow = {
+  id: string;
+  name: string;
+  type: WalletPocketDTO['type'];
+  balance: number;
+  targetAmount: number | null;
+  isDefault: boolean;
+  accountId: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 @Injectable()
 export class PocketService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly priceService: PriceService,
+  ) {}
+
+  private toDTO(row: PocketRow): WalletPocketDTO {
+    return {
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      balance: this.priceService.constructPriceResponse(row.balance, 'NGN'),
+      targetAmount:
+        row.targetAmount === null || row.targetAmount === undefined
+          ? undefined
+          : this.priceService.constructPriceResponse(row.targetAmount, 'NGN'),
+      isDefault: row.isDefault,
+      accountId: row.accountId,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -42,7 +76,7 @@ export class PocketService {
       select: WalletPocketSelect,
       orderBy: { createdAt: 'asc' },
     });
-    return new BaseResponse(pockets);
+    return new BaseResponse(pockets.map((p) => this.toDTO(p)));
   }
 
   async createPocket(body: CreatePocketBodyDTO, req: CustomRequest) {
@@ -54,17 +88,22 @@ export class PocketService {
       );
     }
 
+    const targetKobo =
+      body.targetAmount === undefined
+        ? null
+        : this.priceService.convertToSmallestUnit(body.targetAmount, 'NGN');
+
     const created = await this.prismaService.walletPockets.create({
       data: {
         name: body.name,
         type: body.type,
-        targetAmount: body.targetAmount ?? null,
+        targetAmount: targetKobo,
         accountId: account.id,
         userId: auth.id,
       },
       select: WalletPocketSelect,
     });
-    return new BaseResponse(created);
+    return new BaseResponse(this.toDTO(created));
   }
 
   async updatePocket(
@@ -89,12 +128,17 @@ export class PocketService {
       data: {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.targetAmount !== undefined
-          ? { targetAmount: body.targetAmount }
+          ? {
+              targetAmount: this.priceService.convertToSmallestUnit(
+                body.targetAmount,
+                'NGN',
+              ),
+            }
           : {}),
       },
       select: WalletPocketSelect,
     });
-    return new BaseResponse(updated);
+    return new BaseResponse(this.toDTO(updated));
   }
 
   async deletePocket(id: string, req: CustomRequest) {
@@ -155,7 +199,11 @@ export class PocketService {
         'Pockets must belong to the same account.',
       );
     }
-    if (from.balance < body.amount) {
+    const amountKobo = this.priceService.convertToSmallestUnit(
+      body.amount,
+      'NGN',
+    );
+    if (from.balance < amountKobo) {
       throw new BadRequestException(
         'Insufficient balance in the source pocket.',
       );
@@ -164,16 +212,19 @@ export class PocketService {
     const [updatedFrom, updatedTo] = await this.prismaService.$transaction([
       this.prismaService.walletPockets.update({
         where: { id: from.id },
-        data: { balance: { decrement: body.amount } },
+        data: { balance: { decrement: amountKobo } },
         select: WalletPocketSelect,
       }),
       this.prismaService.walletPockets.update({
         where: { id: to.id },
-        data: { balance: { increment: body.amount } },
+        data: { balance: { increment: amountKobo } },
         select: WalletPocketSelect,
       }),
     ]);
-    return new BaseResponse({ from: updatedFrom, to: updatedTo });
+    return new BaseResponse({
+      from: this.toDTO(updatedFrom),
+      to: this.toDTO(updatedTo),
+    });
   }
 
   // Moves funds from the unallocated portion of the bank balance into a
@@ -203,18 +254,26 @@ export class PocketService {
       _sum: { balance: true },
     });
     const unallocated = account.balance - (totalAllocated._sum.balance ?? 0);
-    if (unallocated < body.amount) {
+    const amountKobo = this.priceService.convertToSmallestUnit(
+      body.amount,
+      'NGN',
+    );
+    if (unallocated < amountKobo) {
+      const unallocatedPrice = this.priceService.constructPriceResponse(
+        unallocated,
+        'NGN',
+      );
       throw new ConflictException(
-        `Only ₦${Math.round(unallocated / 100).toLocaleString('en-NG')} is unallocated and available to move.`,
+        `Only ${unallocatedPrice.formatted.withCurrency} is unallocated and available to move.`,
       );
     }
 
     const updated = await this.prismaService.walletPockets.update({
       where: { id: pocket.id },
-      data: { balance: { increment: body.amount } },
+      data: { balance: { increment: amountKobo } },
       select: WalletPocketSelect,
     });
-    return new BaseResponse(updated);
+    return new BaseResponse(this.toDTO(updated));
   }
 
   // Pull from a pocket back into the unallocated balance.
@@ -231,16 +290,20 @@ export class PocketService {
     if (!pocket || pocket.userId !== auth.id) {
       throw new NotFoundException('Pocket not found.');
     }
-    if (pocket.balance < body.amount) {
+    const amountKobo = this.priceService.convertToSmallestUnit(
+      body.amount,
+      'NGN',
+    );
+    if (pocket.balance < amountKobo) {
       throw new BadRequestException(
         'Insufficient balance in this pocket.',
       );
     }
     const updated = await this.prismaService.walletPockets.update({
       where: { id: pocket.id },
-      data: { balance: { decrement: body.amount } },
+      data: { balance: { decrement: amountKobo } },
       select: WalletPocketSelect,
     });
-    return new BaseResponse(updated);
+    return new BaseResponse(this.toDTO(updated));
   }
 }

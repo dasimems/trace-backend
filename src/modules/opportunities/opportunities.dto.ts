@@ -4,6 +4,7 @@ import {
   IsDefined,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -14,12 +15,12 @@ import { OpportunitySourceEnum } from '@prisma/client';
 export class SimulateQueryDTO {
   @ApiProperty({
     type: Number,
-    description: 'Amount in kobo for the simulation.',
+    description: 'Amount in the major currency unit for the simulation.',
   })
   @IsDefined()
   @Type(() => Number)
-  @IsInt()
-  @Min(100)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
   amount: number;
 
   @ApiProperty({

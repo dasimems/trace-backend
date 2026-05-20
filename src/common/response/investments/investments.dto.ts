@@ -4,6 +4,7 @@ import {
   InvestmentProductTypeEnum,
   RiskLevelEnum,
 } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class InvestmentProductDTO {
   @ApiProperty({ type: String })
@@ -27,8 +28,8 @@ export class InvestmentProductDTO {
   @ApiProperty({ enum: RiskLevelEnum })
   riskLevel: RiskLevelEnum;
 
-  @ApiProperty({ type: Number, description: 'Minimum allocation in kobo' })
-  minAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Minimum allocation' })
+  minAmount: Price;
 
   @ApiProperty({
     type: Number,
@@ -64,11 +65,11 @@ export class InvestmentAllocationDTO {
   @ApiProperty({ type: String })
   productId: string;
 
-  @ApiProperty({ type: Number, description: 'Allocated amount in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Allocated amount' })
+  amount: Price;
 
-  @ApiProperty({ type: Number, description: 'Current value in kobo' })
-  currentValue: number;
+  @ApiProperty({ type: () => Price, description: 'Current value' })
+  currentValue: Price;
 
   @ApiProperty({ enum: InvestmentAllocationStatusEnum })
   status: InvestmentAllocationStatusEnum;
@@ -96,19 +97,19 @@ export class InvestmentHoldingDTO {
   @ApiProperty({ type: String })
   label: string;
 
-  @ApiProperty({ type: Number, description: 'Total value in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Total value' })
+  amount: Price;
 
   @ApiProperty({ type: Number, description: 'Percent of portfolio (0-100)' })
   percent: number;
 }
 
 export class PortfolioResponseDTO {
-  @ApiProperty({ type: Number, description: 'Total portfolio value in kobo' })
-  totalValue: number;
+  @ApiProperty({ type: () => Price, description: 'Total portfolio value' })
+  totalValue: Price;
 
-  @ApiProperty({ type: Number, description: 'Total allocated in kobo' })
-  totalAllocated: number;
+  @ApiProperty({ type: () => Price, description: 'Total allocated' })
+  totalAllocated: Price;
 
   @ApiProperty({
     type: Number,
@@ -127,20 +128,20 @@ export class SafeToInvestResponseDTO {
   @ApiProperty({ enum: ['ok', 'insufficient_data'] })
   status: 'ok' | 'insufficient_data';
 
-  @ApiProperty({ type: Number, description: 'Suggested allocation in kobo' })
-  suggested: number;
+  @ApiProperty({ type: () => Price, description: 'Suggested allocation' })
+  suggested: Price;
 
   @ApiProperty({
-    type: Number,
-    description: 'Conservative floor in kobo (10% of safe-to-save).',
+    type: () => Price,
+    description: 'Conservative floor (10% of safe-to-save).',
   })
-  conservative: number;
+  conservative: Price;
 
   @ApiProperty({
-    type: Number,
-    description: 'Aggressive ceiling in kobo (60% of safe-to-save).',
+    type: () => Price,
+    description: 'Aggressive ceiling (60% of safe-to-save).',
   })
-  aggressive: number;
+  aggressive: Price;
 
   @ApiProperty({ type: String })
   rationale: string;

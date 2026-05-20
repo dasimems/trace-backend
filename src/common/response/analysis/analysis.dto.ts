@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { TransactionCategoryEnum } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class WeeklyCashFlowPointDTO {
   @ApiProperty({ type: String, example: 'Wk 1' })
@@ -11,14 +12,14 @@ export class WeeklyCashFlowPointDTO {
   @ApiProperty({ type: Date })
   end: Date;
 
-  @ApiProperty({ type: Number, description: 'Income in kobo' })
-  income: number;
+  @ApiProperty({ type: () => Price, description: 'Income' })
+  income: Price;
 
-  @ApiProperty({ type: Number, description: 'Spend in kobo' })
-  spend: number;
+  @ApiProperty({ type: () => Price, description: 'Spend' })
+  spend: Price;
 
-  @ApiProperty({ type: Number, required: false, description: 'Forecast in kobo' })
-  forecast?: number;
+  @ApiProperty({ type: () => Price, required: false, description: 'Forecast' })
+  forecast?: Price;
 }
 
 export class CashFlowResponseDTO {
@@ -36,11 +37,11 @@ export class WeeklyMoneyFlowPointDTO {
   @ApiProperty({ type: Date })
   end: Date;
 
-  @ApiProperty({ type: Number, description: 'Inflow in kobo' })
-  in: number;
+  @ApiProperty({ type: () => Price, description: 'Inflow' })
+  in: Price;
 
-  @ApiProperty({ type: Number, description: 'Outflow in kobo' })
-  out: number;
+  @ApiProperty({ type: () => Price, description: 'Outflow' })
+  out: Price;
 }
 
 export class MoneyFlowResponseDTO {
@@ -52,8 +53,8 @@ export class SpendingBreakdownItemDTO {
   @ApiProperty({ enum: TransactionCategoryEnum })
   category: TransactionCategoryEnum;
 
-  @ApiProperty({ type: Number, description: 'Total in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Total spend in category' })
+  amount: Price;
 
   @ApiProperty({ type: Number, description: 'Percent of total spend, 0-100' })
   percent: number;
@@ -63,19 +64,19 @@ export class SpendingBreakdownResponseDTO {
   @ApiProperty({ type: () => [SpendingBreakdownItemDTO] })
   items: SpendingBreakdownItemDTO[];
 
-  @ApiProperty({ type: Number, description: 'Total spend in kobo' })
-  total: number;
+  @ApiProperty({ type: () => Price, description: 'Total spend' })
+  total: Price;
 }
 
 export class CategoryTrendItemDTO {
   @ApiProperty({ enum: TransactionCategoryEnum })
   category: TransactionCategoryEnum;
 
-  @ApiProperty({ type: Number, description: 'Current month spend in kobo' })
-  current: number;
+  @ApiProperty({ type: () => Price, description: 'Current month spend' })
+  current: Price;
 
-  @ApiProperty({ type: Number, description: 'Prior 8-week average in kobo' })
-  average: number;
+  @ApiProperty({ type: () => Price, description: 'Prior 8-week average' })
+  average: Price;
 }
 
 export class CategoryTrendResponseDTO {

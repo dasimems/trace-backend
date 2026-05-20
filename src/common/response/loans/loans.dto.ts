@@ -5,6 +5,7 @@ import {
   LoanRepaymentStatusEnum,
   LoanTierEnum,
 } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class LoanProductDTO {
   @ApiProperty({ type: String })
@@ -25,11 +26,11 @@ export class LoanProductDTO {
   })
   interestRateBps: number;
 
-  @ApiProperty({ type: Number, description: 'Min loan amount in kobo' })
-  minAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Min loan amount' })
+  minAmount: Price;
 
-  @ApiProperty({ type: Number, description: 'Max loan amount in kobo' })
-  maxAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Max loan amount' })
+  maxAmount: Price;
 
   @ApiProperty({ type: Number })
   minTenorDays: number;
@@ -65,28 +66,28 @@ export class LoanTierResponseDTO {
   @ApiProperty({ type: Number, description: 'Composite health score 0-100' })
   healthScore: number;
 
-  @ApiProperty({ type: Number, description: 'Maximum exposure in kobo' })
-  maxExposure: number;
+  @ApiProperty({ type: () => Price, description: 'Maximum exposure' })
+  maxExposure: Price;
 
   @ApiProperty({ type: [String] })
   reasons: string[];
 }
 
 export class LoanAffordabilityResponseDTO {
-  @ApiProperty({ type: Number, description: 'Principal in kobo' })
-  principal: number;
+  @ApiProperty({ type: () => Price, description: 'Principal' })
+  principal: Price;
 
-  @ApiProperty({ type: Number, description: 'Total interest in kobo' })
-  totalInterest: number;
+  @ApiProperty({ type: () => Price, description: 'Total interest' })
+  totalInterest: Price;
 
-  @ApiProperty({ type: Number, description: 'Total repayment in kobo' })
-  totalRepayment: number;
+  @ApiProperty({ type: () => Price, description: 'Total repayment' })
+  totalRepayment: Price;
 
-  @ApiProperty({ type: Number, description: 'Daily payment in kobo' })
-  dailyPayment: number;
+  @ApiProperty({ type: () => Price, description: 'Daily payment' })
+  dailyPayment: Price;
 
-  @ApiProperty({ type: Number, description: 'Weekly payment in kobo' })
-  weeklyPayment: number;
+  @ApiProperty({ type: () => Price, description: 'Weekly payment' })
+  weeklyPayment: Price;
 
   @ApiProperty({ type: Number })
   tenorDays: number;
@@ -109,20 +110,20 @@ export class LoanRepaymentDTO {
   @ApiProperty({ type: Date })
   dueAt: Date;
 
-  @ApiProperty({ type: Number, description: 'Principal portion in kobo' })
-  principalAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Principal portion' })
+  principalAmount: Price;
 
-  @ApiProperty({ type: Number, description: 'Interest portion in kobo' })
-  interestAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Interest portion' })
+  interestAmount: Price;
 
-  @ApiProperty({ type: Number, description: 'Total planned for this installment in kobo' })
-  totalAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Total planned for this installment' })
+  totalAmount: Price;
 
-  @ApiProperty({ type: Number, description: 'Amount already swept in kobo' })
-  paidAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Amount already swept' })
+  paidAmount: Price;
 
-  @ApiProperty({ type: Number, description: 'Remaining owed in kobo' })
-  outstandingAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Remaining owed' })
+  outstandingAmount: Price;
 
   @ApiProperty({ enum: LoanRepaymentStatusEnum })
   status: LoanRepaymentStatusEnum;
@@ -138,20 +139,20 @@ export class LoanScheduleResponseDTO {
   @ApiProperty({ enum: LoanApplicationStatusEnum })
   status: LoanApplicationStatusEnum;
 
-  @ApiProperty({ type: Number, description: 'Disbursed principal in kobo' })
-  principal: number;
+  @ApiProperty({ type: () => Price, description: 'Disbursed principal' })
+  principal: Price;
 
-  @ApiProperty({ type: Number, description: 'Total interest in kobo' })
-  totalInterest: number;
+  @ApiProperty({ type: () => Price, description: 'Total interest' })
+  totalInterest: Price;
 
-  @ApiProperty({ type: Number, description: 'Principal + interest in kobo' })
-  totalRepayment: number;
+  @ApiProperty({ type: () => Price, description: 'Principal + interest' })
+  totalRepayment: Price;
 
-  @ApiProperty({ type: Number, description: 'Sum of paid amounts across installments in kobo' })
-  totalPaid: number;
+  @ApiProperty({ type: () => Price, description: 'Sum of paid amounts across installments' })
+  totalPaid: Price;
 
-  @ApiProperty({ type: Number, description: 'Remaining outstanding across the loan in kobo' })
-  totalOutstanding: number;
+  @ApiProperty({ type: () => Price, description: 'Remaining outstanding across the loan' })
+  totalOutstanding: Price;
 
   @ApiProperty({ type: Date, required: false })
   disbursedAt?: Date;
@@ -173,11 +174,11 @@ export class LoanApplicationDTO {
   @ApiProperty({ type: String })
   productId: string;
 
-  @ApiProperty({ type: Number, description: 'Requested amount in kobo' })
-  requestedAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Requested amount' })
+  requestedAmount: Price;
 
-  @ApiProperty({ type: Number, required: false, description: 'Approved amount in kobo' })
-  approvedAmount?: number;
+  @ApiProperty({ type: () => Price, required: false, description: 'Approved amount' })
+  approvedAmount?: Price;
 
   @ApiProperty({ type: Number })
   tenorDays: number;

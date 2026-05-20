@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { BankAccountSelect } from '@common/prisma/selects/bank-account.select';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
@@ -52,6 +53,7 @@ export class WalletService {
     private readonly prismaService: PrismaService,
     private readonly squadService: SquadService,
     private readonly eventBus: EventBusService,
+    private readonly priceService: PriceService,
     @Inject(REDIS_CACHE) private readonly cache: Keyv,
   ) {}
 
@@ -142,14 +144,16 @@ export class WalletService {
       ]);
 
     const pending = pendingAgg._sum.amount ?? 0;
+    const wrap = (kobo: number) =>
+      this.priceService.constructPriceResponse(kobo, 'NGN');
     return {
-      account: AccountResponse.constructAccountDetails(account),
+      account: AccountResponse.constructAccountDetails(account, this.priceService),
       balance: {
-        available: Math.max(account.balance - pending, 0),
-        ledger: account.balance,
-        pending,
-        todayInflow: todayInflowAgg._sum.amount ?? 0,
-        todayOutflow: todayOutflowAgg._sum.amount ?? 0,
+        available: wrap(Math.max(account.balance - pending, 0)),
+        ledger: wrap(account.balance),
+        pending: wrap(pending),
+        todayInflow: wrap(todayInflowAgg._sum.amount ?? 0),
+        todayOutflow: wrap(todayOutflowAgg._sum.amount ?? 0),
       },
     };
   }
@@ -257,7 +261,10 @@ export class WalletService {
         payload: {
           transactionId: updated.id,
           reference: updated.reference,
-          amount: updated.amount,
+          amount: this.priceService.constructPriceResponse(
+            updated.amount,
+            updated.currency,
+          ),
           status: newStatus,
         },
       });
@@ -280,7 +287,10 @@ export class WalletService {
     }
     const updated = await this.reverifyPendingInternal(reference);
     if (!updated) throw new NotFoundException('Transaction not found.');
-    return TransactionResponse.createIndividualTransactionResponse(updated);
+    return TransactionResponse.createIndividualTransactionResponse(
+      updated,
+      this.priceService,
+    );
   }
 
   // Bulk reconcile all of the user's PENDING transactions against Squad and
@@ -345,6 +355,10 @@ export class WalletService {
     // Unique, traceable reference. Squad accepts up to 100 chars; we keep
     // ours short so it round-trips cleanly through their dashboard.
     const reference = `trace-fund-${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+    const amountKobo = this.priceService.convertToSmallestUnit(
+      body.amount,
+      'NGN',
+    );
 
     // 1. Pre-create the local row in PENDING. Whichever path finalises first
     //    (verify-on-return OR webhook) flips it to SUCCESS atomically.
@@ -355,8 +369,8 @@ export class WalletService {
         status: TransactionStatusEnum.PENDING,
         category: TransactionCategoryEnum.INCOME,
         description: 'Wallet top-up',
-        amount: body.amount,
-        principalAmount: body.amount,
+        amount: amountKobo,
+        principalAmount: amountKobo,
         currency: 'NGN',
         remark: 'Payment via Squad checkout',
         accountId: account.id,
@@ -369,7 +383,7 @@ export class WalletService {
       [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
       undefined;
     const squadResult = await this.squadService.initiatePayment({
-      amount: body.amount,
+      amount: amountKobo,
       email: user.email ?? `${user.id}@trace.local`,
       currency: 'NGN',
       transaction_ref: reference,
@@ -396,7 +410,7 @@ export class WalletService {
     const response: FundAccountResponseDTO = {
       checkoutUrl,
       reference,
-      amount: body.amount,
+      amount: this.priceService.constructPriceResponse(amountKobo, 'NGN'),
       currency: 'NGN',
     };
     return new BaseResponse(response);
@@ -455,8 +469,14 @@ export class WalletService {
         payload: {
           transactionId: row.id,
           reference: row.reference,
-          amount: row.amount,
-          balance: account.balance,
+          amount: this.priceService.constructPriceResponse(
+            row.amount,
+            row.currency,
+          ),
+          balance: this.priceService.constructPriceResponse(
+            account.balance,
+            row.currency,
+          ),
           gatewayRef: meta.gatewayRef ?? null,
           paymentType: meta.paymentType ?? null,
         },
@@ -476,7 +496,11 @@ export class WalletService {
       );
     }
 
-    if (account.balance < body.amount) {
+    const amountKobo = this.priceService.convertToSmallestUnit(
+      body.amount,
+      'NGN',
+    );
+    if (account.balance < amountKobo) {
       throw new BadRequestException(
         'Insufficient balance for this transfer.',
       );
@@ -503,7 +527,7 @@ export class WalletService {
     const pendingTx = await this.prismaService.$transaction(async (tx) => {
       const updated = await tx.bankAccounts.update({
         where: { id: account.id },
-        data: { balance: { decrement: body.amount } },
+        data: { balance: { decrement: amountKobo } },
         select: { id: true, balance: true },
       });
       if (updated.balance < 0) {
@@ -518,7 +542,7 @@ export class WalletService {
           status: TransactionStatusEnum.PENDING,
           category: inferred,
           description: remark,
-          amount: body.amount,
+          amount: amountKobo,
           currency: 'NGN',
           recipientName: body.accountName,
           recipientAccountNumber: body.accountNumber,
@@ -537,7 +561,7 @@ export class WalletService {
     try {
       const squadResult = await this.squadService.transferFunds({
         transaction_reference: reference,
-        amount: body.amount.toString(),
+        amount: amountKobo.toString(),
         bank_code: body.bankCode,
         account_number: body.accountNumber,
         account_name: body.accountName,
@@ -555,7 +579,10 @@ export class WalletService {
         },
         select: TransactionSelect,
       });
-      return TransactionResponse.createIndividualTransactionResponse(finalised);
+      return TransactionResponse.createIndividualTransactionResponse(
+        finalised,
+        this.priceService,
+      );
     } catch (error) {
       this.logger.warn(
         `Squad transfer ${reference} failed: ${(error as Error).message}`,
@@ -564,7 +591,7 @@ export class WalletService {
         await this.prismaService.$transaction([
           this.prismaService.bankAccounts.update({
             where: { id: account.id },
-            data: { balance: { increment: body.amount } },
+            data: { balance: { increment: amountKobo } },
           }),
           this.prismaService.transactions.update({
             where: { id: pendingTx.id },

@@ -8,6 +8,7 @@ import {
   VirtualCardStatusEnum,
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import BaseResponse from '@common/response/base.response';
 import { VirtualCardDTO } from '@common/response/wallet/virtual-card.dto';
@@ -22,7 +23,10 @@ const DEFAULT_SPEND_LIMIT_KOBO = 200_000 * 100; // ₦200,000
 // real payment.
 @Injectable()
 export class VirtualCardService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly priceService: PriceService,
+  ) {}
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -52,6 +56,14 @@ export class VirtualCardService {
       );
     }
 
+    const spendLimitKobo =
+      body.spendLimitMonthly === undefined
+        ? DEFAULT_SPEND_LIMIT_KOBO
+        : this.priceService.convertToSmallestUnit(
+            body.spendLimitMonthly,
+            'NGN',
+          );
+
     const card = await this.prismaService.virtualCards.create({
       data: {
         userId: auth.id,
@@ -61,7 +73,7 @@ export class VirtualCardService {
         expMonth: 1 + Math.floor(Math.random() * 12),
         expYear: new Date().getFullYear() + 4,
         status: VirtualCardStatusEnum.ACTIVE,
-        spendLimitMonthly: body.spendLimitMonthly ?? DEFAULT_SPEND_LIMIT_KOBO,
+        spendLimitMonthly: spendLimitKobo,
         spentThisMonth: 0,
       },
     });
@@ -136,8 +148,14 @@ export class VirtualCardService {
       expMonth: card.expMonth,
       expYear: card.expYear,
       status: card.status,
-      spendLimitMonthly: card.spendLimitMonthly,
-      spentThisMonth: card.spentThisMonth,
+      spendLimitMonthly: this.priceService.constructPriceResponse(
+        card.spendLimitMonthly,
+        'NGN',
+      ),
+      spentThisMonth: this.priceService.constructPriceResponse(
+        card.spentThisMonth,
+        'NGN',
+      ),
       createdAt: card.createdAt,
     };
   }

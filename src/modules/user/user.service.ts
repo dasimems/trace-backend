@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
 import { PasswordService } from '@common/password/password.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { BankAccountSelect } from '@common/prisma/selects/bank-account.select';
 import { UserDetailsSelect } from '@common/prisma/selects/user.select';
@@ -19,6 +20,7 @@ export class UserService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly passwordService: PasswordService,
+    private readonly priceService: PriceService,
   ) {}
 
   private requireAuth(req: CustomRequest) {
@@ -34,7 +36,7 @@ export class UserService {
       select: { ...UserDetailsSelect, bankAccounts: { select: BankAccountSelect } },
     });
     if (!user) throw new UnauthorizedException('Unauthorized!');
-    return UserResponse.createIndividualUserResponse(user);
+    return UserResponse.createIndividualUserResponse(user, this.priceService);
   }
 
   async updateMe(body: UpdateUserBodyDTO, req: CustomRequest) {
@@ -90,7 +92,7 @@ export class UserService {
       data,
       select: { ...UserDetailsSelect, bankAccounts: { select: BankAccountSelect } },
     });
-    return UserResponse.createIndividualUserResponse(updated);
+    return UserResponse.createIndividualUserResponse(updated, this.priceService);
   }
 
   async changePassword(body: ChangePasswordBodyDTO, req: CustomRequest) {

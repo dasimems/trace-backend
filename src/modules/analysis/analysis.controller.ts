@@ -107,7 +107,7 @@ export class AnalysisController {
     return this.analysisService.getCategoryTrend(auth.id);
   }
 
-  // ─── Insights — cached reads ────────────────────────────────────────────
+  // ─── Insights — cached reads ───────────────────────────────────────────
   // These NEVER block on computation. They return `{ status: "fresh", value,
   // lastUpdated }` if the cache has data, or `{ status: "pending", value:
   // null }` otherwise. To populate the cache, POST /analysis/refresh.

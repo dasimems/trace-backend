@@ -14,6 +14,7 @@ import { OAuthService } from '@common/oauth/oauth.service';
 import { OAuthProvider, OAuthVerifiedUser } from '@common/oauth/oauth.dto';
 import { OtpService } from '@common/otp/otp.service';
 import { PasswordService } from '@common/password/password.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { BankAccountSelect } from '@common/prisma/selects/bank-account.select';
 import { UserDetailsSelect } from '@common/prisma/selects/user.select';
@@ -46,6 +47,7 @@ export class AuthService {
     private readonly emailService: EmailService,
     private readonly oauthService: OAuthService,
     private readonly urlService: UrlService,
+    private readonly priceService: PriceService,
   ) {}
 
   private getUserDetailsByEmail(email: string) {
@@ -123,7 +125,11 @@ export class AuthService {
       userDetails,
     );
 
-    return LoginResponse.constructLoginResponse(userDetails, accessToken);
+    return LoginResponse.constructLoginResponse(
+      userDetails,
+      this.priceService,
+      accessToken,
+    );
   }
 
   async signIn(body: SignInBodyDTO, req: CustomRequest) {
@@ -150,7 +156,11 @@ export class AuthService {
       userDetails,
     );
 
-    return LoginResponse.constructLoginResponse(userDetails, accessToken);
+    return LoginResponse.constructLoginResponse(
+      userDetails,
+      this.priceService,
+      accessToken,
+    );
   }
 
   async createAccount(body: CreateAccountBodyDTO, req: CustomRequest) {
@@ -299,7 +309,10 @@ export class AuthService {
       });
     });
 
-    return UserResponse.createIndividualUserResponse(updatedUser!);
+    return UserResponse.createIndividualUserResponse(
+      updatedUser,
+      this.priceService,
+    );
   }
 
   async getMe(req: CustomRequest) {
@@ -313,7 +326,10 @@ export class AuthService {
       throw new UnauthorizedException('Unauthorized!');
     }
 
-    return UserResponse.createIndividualUserResponse(userDetails);
+    return UserResponse.createIndividualUserResponse(
+      userDetails,
+      this.priceService,
+    );
   }
 
   // Allows the frontend to surface the freshly-created virtual account on the
@@ -330,7 +346,10 @@ export class AuthService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return AccountResponse.createMultipleAccountResponse(accounts);
+    return AccountResponse.createMultipleAccountResponse(
+      accounts,
+      this.priceService,
+    );
   }
 
   // ─── OTP + password recovery ───────────────────────────────────────────
@@ -536,7 +555,11 @@ export class AuthService {
         req,
         existing,
       );
-      return LoginResponse.constructLoginResponse(existing, accessToken);
+      return LoginResponse.constructLoginResponse(
+        existing,
+        this.priceService,
+        accessToken,
+      );
     }
 
     // First-time sign-in via OAuth → create the user. Password is set to a
@@ -572,6 +595,10 @@ export class AuthService {
       req,
       created,
     );
-    return LoginResponse.constructLoginResponse(created, accessToken);
+    return LoginResponse.constructLoginResponse(
+      created,
+      this.priceService,
+      accessToken,
+    );
   }
 }

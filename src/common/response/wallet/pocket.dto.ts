@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { WalletPocketTypeEnum } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class WalletPocketDTO {
   @ApiProperty({ type: String })
@@ -11,15 +12,15 @@ export class WalletPocketDTO {
   @ApiProperty({ enum: WalletPocketTypeEnum })
   type: WalletPocketTypeEnum;
 
-  @ApiProperty({ type: Number, description: 'Balance in kobo' })
-  balance: number;
+  @ApiProperty({ type: () => Price, description: 'Pocket balance' })
+  balance: Price;
 
   @ApiProperty({
-    type: Number,
+    type: () => Price,
     required: false,
-    description: 'Goal target in kobo, when type=GOAL',
+    description: 'Goal target, when type=GOAL',
   })
-  targetAmount?: number;
+  targetAmount?: Price;
 
   @ApiProperty({ type: Boolean })
   isDefault: boolean;

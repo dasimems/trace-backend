@@ -9,6 +9,7 @@ import {
   IsEnum,
   IsInt,
   IsISO8601,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -20,16 +21,21 @@ const toTrimmed = ({ value }: { value: unknown }) =>
 
 export class CreatePaymentRequestBodyDTO {
   @ApiProperty({
-    description: 'Amount in KOBO. Min ₦100.',
+    description:
+      'Amount in the major currency unit (e.g. 500 = ₦500). Decimals allowed. Min ₦100.',
     type: Number,
-    example: 50000,
-    minimum: 10_000,
-    maximum: 100_000_000_00,
+    example: 500,
+    minimum: 100,
+    maximum: 100_000_000,
   })
   @IsDefined({ message: 'Amount is required' })
-  @IsInt({ message: 'Amount must be an integer (in kobo)' })
-  @Min(10_000, { message: 'Amount must be at least ₦100 (10,000 kobo)' })
-  @Max(100_000_000_00, {
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'Amount must be a number with up to 2 decimal places' },
+  )
+  @Min(100, { message: 'Amount must be at least ₦100' })
+  @Max(100_000_000, {
     message: 'Amount cannot exceed ₦100,000,000 per request',
   })
   amount: number;

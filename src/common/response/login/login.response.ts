@@ -1,3 +1,4 @@
+import { PriceService } from '@common/price/price.service';
 import BaseResponse from '../base.response';
 import { UserDetailsDBDto } from '../user/user.dto';
 import UserResponse from '../user/user.response';
@@ -8,10 +9,14 @@ class LoginResponse extends BaseResponse<LoginResponseDTO> {
     super(data);
   }
 
-  static constructLoginResponse(user: UserDetailsDBDto, accessToken?: string) {
+  static constructLoginResponse(
+    user: UserDetailsDBDto,
+    priceService: PriceService,
+    accessToken?: string,
+  ) {
     return new LoginResponse({
       accessToken,
-      user: UserResponse.constructUserDetails(user),
+      user: UserResponse.constructUserDetails(user, priceService),
     });
   }
 }

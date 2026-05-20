@@ -1,3 +1,4 @@
+import { PriceService } from '@common/price/price.service';
 import BaseResponse from '../base.response';
 import { BankAccountDBDto, BankAccountResponseDTO } from './account.dto';
 
@@ -10,6 +11,7 @@ class AccountResponse extends BaseResponse<ResponseType> {
 
   static constructAccountDetails(
     account: BankAccountDBDto,
+    priceService: PriceService,
   ): BankAccountResponseDTO {
     return {
       id: account.id,
@@ -19,19 +21,29 @@ class AccountResponse extends BaseResponse<ResponseType> {
       customerIdentifier: account.customerIdentifier,
       beneficiaryAccount: account.beneficiaryAccount || undefined,
       provider: account.provider,
-      balance: account.balance,
+      balance: priceService.constructPriceResponse(account.balance),
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
   }
 
-  static createIndividualAccountResponse(account: BankAccountDBDto) {
-    return new AccountResponse(this.constructAccountDetails(account));
+  static createIndividualAccountResponse(
+    account: BankAccountDBDto,
+    priceService: PriceService,
+  ) {
+    return new AccountResponse(
+      this.constructAccountDetails(account, priceService),
+    );
   }
 
-  static createMultipleAccountResponse(accounts: BankAccountDBDto[]) {
+  static createMultipleAccountResponse(
+    accounts: BankAccountDBDto[],
+    priceService: PriceService,
+  ) {
     return new AccountResponse(
-      accounts.map((account) => this.constructAccountDetails(account)),
+      accounts.map((account) =>
+        this.constructAccountDetails(account, priceService),
+      ),
     );
   }
 }

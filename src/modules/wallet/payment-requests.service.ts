@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
 import { EventBusService } from '@common/events/event-bus.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import BaseResponse from '@common/response/base.response';
 import { PaymentRequestDTO } from '@common/response/wallet/wallet.dto';
@@ -33,6 +34,7 @@ export class PaymentRequestsService {
     private readonly prismaService: PrismaService,
     private readonly squadService: SquadService,
     private readonly eventBus: EventBusService,
+    private readonly priceService: PriceService,
   ) {}
 
   // ─── Create (FUND vs REQUEST) ────────────────────────────────────────────
@@ -66,12 +68,16 @@ export class PaymentRequestsService {
     // logs are scannable: `trace-fund-<uuid>` vs `trace-req-<uuid>`.
     const slug = kind === PaymentRequestKindEnum.FUND ? 'fund' : 'req';
     const reference = `trace-${slug}-${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+    const amountKobo = this.priceService.convertToSmallestUnit(
+      body.amount,
+      'NGN',
+    );
     const customerName =
       [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
       undefined;
 
     const squadResult = await this.squadService.initiatePayment({
-      amount: body.amount,
+      amount: amountKobo,
       email: user.email ?? `${user.id}@trace.local`,
       currency: 'NGN',
       transaction_ref: reference,
@@ -97,7 +103,7 @@ export class PaymentRequestsService {
         userId: auth.id,
         reference,
         kind,
-        amount: body.amount,
+        amount: amountKobo,
         currency: 'NGN',
         status: PaymentRequestStatusEnum.PENDING,
         description: body.description?.slice(0, 200),
@@ -366,8 +372,14 @@ export class PaymentRequestsService {
           paymentRequestId: row.id,
           reference: row.reference,
           transactionId: newTx.id,
-          amount: row.amount,
-          balance: updatedAccount.balance,
+          amount: this.priceService.constructPriceResponse(
+            row.amount,
+            row.currency,
+          ),
+          balance: this.priceService.constructPriceResponse(
+            updatedAccount.balance,
+            row.currency,
+          ),
           gatewayRef: meta.gatewayRef ?? null,
           paymentType: meta.paymentType ?? null,
           paidByEmail: meta.paidByEmail ?? null,
@@ -390,7 +402,7 @@ export class PaymentRequestsService {
       reference: row.reference,
       gatewayRef: row.gatewayRef ?? undefined,
       kind: row.kind,
-      amount: row.amount,
+      amount: this.priceService.constructPriceResponse(row.amount, row.currency),
       currency: row.currency,
       status: row.status,
       description: row.description ?? undefined,

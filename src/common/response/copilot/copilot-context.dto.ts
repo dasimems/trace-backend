@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Price } from '@common/price/price.dto';
 
 export type Tone = 'good' | 'lime' | 'info' | 'warn' | 'bad';
 
@@ -25,8 +26,8 @@ export class CopilotContextObligationDTO {
   @ApiProperty({ type: String, example: 'Loan repayment · Mon' })
   label: string;
 
-  @ApiProperty({ type: Number, description: 'Amount due in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Amount due' })
+  amount: Price;
 
   @ApiProperty({ type: Date })
   dueAt: Date;

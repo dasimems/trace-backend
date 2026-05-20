@@ -5,6 +5,7 @@ import {
   TransactionStatusEnum,
 } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import BaseResponse from '@common/response/base.response';
 import {
@@ -26,7 +27,13 @@ interface WeekBucket {
 
 @Injectable()
 export class AnalysisService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly priceService: PriceService,
+  ) {}
+
+  private wrap = (kobo: number) =>
+    this.priceService.constructPriceResponse(kobo, 'NGN');
 
   private startOfWeek(date: Date) {
     const d = new Date(date);
@@ -99,8 +106,8 @@ export class AnalysisService {
       label: b.label,
       start: b.start,
       end: b.end,
-      income: b.income,
-      spend: b.spend,
+      income: this.wrap(b.income),
+      spend: this.wrap(b.spend),
     }));
     return new BaseResponse<CashFlowResponseDTO>({ weeks: points });
   }
@@ -137,8 +144,8 @@ export class AnalysisService {
       label: b.label,
       start: b.start,
       end: b.end,
-      in: b.income,
-      out: b.spend,
+      in: this.wrap(b.income),
+      out: this.wrap(b.spend),
     }));
     return new BaseResponse<MoneyFlowResponseDTO>({ weeks: points });
   }
@@ -168,10 +175,10 @@ export class AnalysisService {
     const response: SpendingBreakdownResponseDTO = {
       items: items.map((row) => ({
         category: row.category,
-        amount: row.amount,
+        amount: this.wrap(row.amount),
         percent: total === 0 ? 0 : Math.round((row.amount / total) * 100),
       })),
-      total,
+      total: this.wrap(total),
     };
 
     return new BaseResponse(response);
@@ -220,17 +227,22 @@ export class AnalysisService {
       ...priorByCategory.keys(),
     ]);
 
+    const rawItems = Array.from(categories)
+      .map((category) => ({
+        category,
+        current:
+          currentRows.find((r) => r.category === category)?._sum.amount ?? 0,
+        average: priorByCategory.get(category) ?? 0,
+      }))
+      .filter((row) => row.current > 0 || row.average > 0)
+      .sort((a, b) => b.current - a.current);
+
     const response: CategoryTrendResponseDTO = {
-      items: Array.from(categories)
-        .map((category) => ({
-          category,
-          current:
-            currentRows.find((r) => r.category === category)?._sum.amount ??
-            0,
-          average: priorByCategory.get(category) ?? 0,
-        }))
-        .filter((row) => row.current > 0 || row.average > 0)
-        .sort((a, b) => b.current - a.current),
+      items: rawItems.map((row) => ({
+        category: row.category,
+        current: this.wrap(row.current),
+        average: this.wrap(row.average),
+      })),
     };
 
     return new BaseResponse(response);
@@ -277,7 +289,7 @@ export class AnalysisService {
       totalSpend += tx.amount;
     }
 
-    const cellArray = Array.from(cells.entries()).map(([key, val]) => {
+    const rawCells = Array.from(cells.entries()).map(([key, val]) => {
       const [d, h] = key.split(':').map(Number);
       return {
         dayOfWeek: d as 0 | 1 | 2 | 3 | 4 | 5 | 6,
@@ -287,20 +299,31 @@ export class AnalysisService {
       };
     });
 
-    let peakCell: { dayOfWeek: number; hour: number; amount: number } | null =
+    let rawPeak: { dayOfWeek: number; hour: number; amount: number } | null =
       null;
-    for (const c of cellArray) {
-      if (!peakCell || c.amount > peakCell.amount) {
-        peakCell = { dayOfWeek: c.dayOfWeek, hour: c.hour, amount: c.amount };
+    for (const c of rawCells) {
+      if (!rawPeak || c.amount > rawPeak.amount) {
+        rawPeak = { dayOfWeek: c.dayOfWeek, hour: c.hour, amount: c.amount };
       }
     }
 
     return new BaseResponse({
-      cells: cellArray,
+      cells: rawCells.map((c) => ({
+        dayOfWeek: c.dayOfWeek,
+        hour: c.hour,
+        amount: this.wrap(c.amount),
+        txCount: c.txCount,
+      })),
       rangeStart,
       rangeEnd,
-      totalSpend,
-      peakCell,
+      totalSpend: this.wrap(totalSpend),
+      peakCell: rawPeak
+        ? {
+            dayOfWeek: rawPeak.dayOfWeek,
+            hour: rawPeak.hour,
+            amount: this.wrap(rawPeak.amount),
+          }
+        : null,
     });
   }
 }

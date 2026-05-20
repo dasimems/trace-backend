@@ -1,32 +1,33 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { UploadedDocumentCategoryEnum } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class OpportunitySimulationDTO {
-  @ApiProperty({ type: Number, description: 'Input amount in kobo' })
-  inputAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Input amount' })
+  inputAmount: Price;
 
   @ApiProperty({ type: Number })
   inputTenorDays: number;
 
   // Loan-side
-  @ApiProperty({ type: Number, required: false })
-  totalRepayment?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  totalRepayment?: Price;
 
-  @ApiProperty({ type: Number, required: false })
-  totalInterest?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  totalInterest?: Price;
 
-  @ApiProperty({ type: Number, required: false })
-  weeklyPayment?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  weeklyPayment?: Price;
 
-  @ApiProperty({ type: Number, required: false })
-  dailyPayment?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  dailyPayment?: Price;
 
   @ApiProperty({ type: Boolean, required: false })
   isAffordable?: boolean;
 
   // Investment-side
-  @ApiProperty({ type: Number, required: false })
-  projectedValue?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  projectedValue?: Price;
 
   @ApiProperty({ type: Number, required: false })
   projectedReturnBps?: number;
@@ -37,11 +38,11 @@ export class OpportunitySimulationDTO {
 }
 
 export class OpportunityPersonalizedDTO {
-  @ApiProperty({ type: Number, required: false, description: 'Kobo' })
-  estimatedNetReceived?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  estimatedNetReceived?: Price;
 
-  @ApiProperty({ type: Number, required: false, description: 'Kobo' })
-  estimatedMonthlyCost?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  estimatedMonthlyCost?: Price;
 
   @ApiProperty({
     type: Number,
@@ -64,8 +65,8 @@ export class CostBreakdownItemDTO {
   @ApiProperty({ type: String })
   label: string;
 
-  @ApiProperty({ type: Number, description: 'Kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price })
+  amount: Price;
 
   @ApiProperty({ type: Boolean })
   recurring: boolean;
@@ -75,11 +76,11 @@ export class CostBreakdownResponseDTO {
   @ApiProperty({ type: () => [CostBreakdownItemDTO] })
   items: CostBreakdownItemDTO[];
 
-  @ApiProperty({ type: Number, description: 'Kobo' })
-  totalUpfront: number;
+  @ApiProperty({ type: () => Price })
+  totalUpfront: Price;
 
-  @ApiProperty({ type: Number, description: 'Kobo per cycle' })
-  totalRecurring: number;
+  @ApiProperty({ type: () => Price, description: 'Per cycle' })
+  totalRecurring: Price;
 
   @ApiProperty({
     enum: ['WEEKLY', 'MONTHLY', 'DAILY'],

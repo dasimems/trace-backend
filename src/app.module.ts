@@ -19,6 +19,7 @@ import { OAuthModule } from '@common/oauth/oauth.module';
 import { OtpModule } from '@common/otp/otp.module';
 import { PasswordModule } from '@common/password/password.module';
 import { PinModule } from '@common/pin/pin.module';
+import { PriceModule } from '@common/price/price.module';
 import { PrismaModule } from '@common/prisma/prisma.module';
 import { SquadModule } from '@common/squad/squad.module';
 import { UrlModule } from '@common/url/url.module';
@@ -66,6 +67,7 @@ import { WebhooksModule } from '@modules/webhooks/webhooks.module';
     OtpModule,
     PasswordModule,
     PinModule,
+    PriceModule,
     PrismaModule,
     SquadModule,
     UrlModule,

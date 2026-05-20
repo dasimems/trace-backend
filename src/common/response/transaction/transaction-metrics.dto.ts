@@ -1,17 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Price } from '@common/price/price.dto';
 
 export class TransactionMetricsResponseDTO {
   @ApiProperty({
-    type: Number,
-    description: 'Inflow this month, in kobo',
+    type: () => Price,
+    description: 'Inflow this month',
   })
-  inflowThisMonth: number;
+  inflowThisMonth: Price;
 
   @ApiProperty({
-    type: Number,
-    description: 'Outflow this month, in kobo',
+    type: () => Price,
+    description: 'Outflow this month',
   })
-  outflowThisMonth: number;
+  outflowThisMonth: Price;
 
   @ApiProperty({
     type: Number,

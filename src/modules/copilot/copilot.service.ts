@@ -15,6 +15,7 @@ import {
 import type { CustomRequest } from '@common/authentication/authentication.dto';
 import { LlmService } from '@common/llm/llm.service';
 import { LlmMessage } from '@common/llm/llm.dto';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -52,7 +53,11 @@ export class CopilotService {
     private readonly prismaService: PrismaService,
     private readonly llmService: LlmService,
     private readonly insightsService: InsightsService,
+    private readonly priceService: PriceService,
   ) {}
+
+  private wrap = (kobo: number) =>
+    this.priceService.constructPriceResponse(kobo, 'NGN');
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -321,7 +326,7 @@ export class CopilotService {
     const obligations: CopilotContextResponseDTO['upcomingObligations'] =
       loans.map((l) => ({
         label: `${l.product.name} · repayment`,
-        amount: l.approvedAmount ?? l.requestedAmount,
+        amount: this.wrap(l.approvedAmount ?? l.requestedAmount),
         dueAt: l.dueAt!,
       }));
 
@@ -338,7 +343,7 @@ export class CopilotService {
       }
       obligations.push({
         label: r.counterparty,
-        amount: r.averageAmount,
+        amount: this.wrap(r.averageAmount),
         dueAt: r.nextExpected,
       });
     }
@@ -502,15 +507,17 @@ export class CopilotService {
       )
       .reduce((s, t) => s + t.amount, 0);
 
+    const currency = this.priceService.getCurrencyMeta('NGN');
     return {
       name: [user.firstName, user.lastName].filter(Boolean).join(' ') || null,
+      currency,
       account: account
-        ? { accountNumber: account.accountNumber, balance_kobo: account.balance }
+        ? { accountNumber: account.accountNumber, balance_minor: account.balance }
         : null,
       this_month: {
-        inflow_kobo: inflow,
-        outflow_kobo: outflow,
-        net_kobo: inflow - outflow,
+        inflow_minor: inflow,
+        outflow_minor: outflow,
+        net_minor: inflow - outflow,
         savings_rate_pct:
           inflow > 0 ? Math.round(((inflow - outflow) / inflow) * 100) : 0,
       },
@@ -518,7 +525,7 @@ export class CopilotService {
       health_score: health.score,
       health_tags: health.tags,
       loan_tier: tier.tier,
-      loan_max_exposure_kobo: tier.maxExposure,
+      loan_max_exposure_minor: tier.maxExposure,
       recurring_count: recurring.length,
       anomaly_count_last_30d: anomalies.filter(
         (a) =>
@@ -623,12 +630,13 @@ export class CopilotService {
     ]);
 
     return {
+      currency: this.priceService.getCurrencyMeta('NGN'),
       total_matching: total,
-      total_amount_kobo: sumAgg._sum.amount ?? 0,
+      total_amount_minor: sumAgg._sum.amount ?? 0,
       returned: rows.length,
       transactions: rows.map((r) => ({
         date: r.createdAt.toISOString(),
-        amount_kobo: r.amount,
+        amount_minor: r.amount,
         direction: r.direction,
         status: r.status,
         category: r.category,
@@ -642,11 +650,12 @@ export class CopilotService {
     userId: string,
     input: Record<string, unknown>,
   ) {
-    const amount = typeof input.amountKobo === 'number' ? input.amountKobo : 0;
+    const amount =
+      typeof input.amountMinor === 'number' ? input.amountMinor : 0;
     const tenorDays =
       typeof input.tenorDays === 'number' ? input.tenorDays : 30;
     if (amount <= 0 || tenorDays <= 0) {
-      return { error: 'amountKobo and tenorDays must be positive' };
+      return { error: 'amountMinor and tenorDays must be positive' };
     }
     const products = await this.prismaService.loanProducts.findMany({
       where: { isActive: true },
@@ -699,16 +708,17 @@ export class CopilotService {
       avgDailyInflow > 0 && dailyPayment <= avgDailyInflow * 0.3;
 
     return {
+      currency: this.priceService.getCurrencyMeta('NGN'),
       product: product.name,
       provider: product.provider,
       tier: product.requiredTier,
       annual_rate_pct: (product.interestRateBps / 100).toFixed(2),
-      principal_kobo: amount,
+      principal_minor: amount,
       tenor_days: tenorDays,
-      total_interest_kobo: totalInterest,
-      total_repayment_kobo: totalRepayment,
-      daily_payment_kobo: dailyPayment,
-      avg_daily_inflow_kobo: Math.round(avgDailyInflow),
+      total_interest_minor: totalInterest,
+      total_repayment_minor: totalRepayment,
+      daily_payment_minor: dailyPayment,
+      avg_daily_inflow_minor: Math.round(avgDailyInflow),
       affordable,
       verdict: affordable
         ? 'Daily payment under 30% of average inflow.'
@@ -720,8 +730,9 @@ export class CopilotService {
     userId: string,
     input: Record<string, unknown>,
   ) {
-    const amount = typeof input.amountKobo === 'number' ? input.amountKobo : 0;
-    if (amount <= 0) return { error: 'amountKobo must be positive' };
+    const amount =
+      typeof input.amountMinor === 'number' ? input.amountMinor : 0;
+    if (amount <= 0) return { error: 'amountMinor must be positive' };
 
     const products = await this.prismaService.investmentProducts.findMany({
       where: { isActive: true },
@@ -752,14 +763,15 @@ export class CopilotService {
     const affordable = (account?.balance ?? 0) >= amount;
 
     return {
+      currency: this.priceService.getCurrencyMeta('NGN'),
       product: product.name,
       provider: product.provider,
       risk: product.riskLevel,
       annual_yield_pct: (product.expectedReturnBps / 100).toFixed(2),
-      principal_kobo: amount,
+      principal_minor: amount,
       tenor_days: product.tenorDays ?? null,
-      projected_interest_kobo: projectedInterest,
-      total_value_at_maturity_kobo: amount + projectedInterest,
+      projected_interest_minor: projectedInterest,
+      total_value_at_maturity_minor: amount + projectedInterest,
       affordable_against_balance: affordable,
       verdict: affordable
         ? 'You can fund this from your current balance.'
@@ -785,13 +797,14 @@ export class CopilotService {
     const allocated = pockets.reduce((s, p) => s + p.balance, 0);
     const unallocated = (account?.balance ?? 0) - allocated;
     return {
-      account_balance_kobo: account?.balance ?? 0,
-      unallocated_kobo: unallocated,
+      currency: this.priceService.getCurrencyMeta('NGN'),
+      account_balance_minor: account?.balance ?? 0,
+      unallocated_minor: unallocated,
       pockets: pockets.map((p) => ({
         name: p.name,
         type: p.type,
-        balance_kobo: p.balance,
-        target_kobo: p.targetAmount ?? null,
+        balance_minor: p.balance,
+        target_minor: p.targetAmount ?? null,
       })),
     };
   }

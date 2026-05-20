@@ -4,6 +4,7 @@ import {
   IsDefined,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -43,11 +44,14 @@ export class AllocateBodyDTO {
   @IsUUID()
   productId: string;
 
-  @ApiProperty({ type: Number, description: 'Amount in kobo' })
+  @ApiProperty({
+    type: Number,
+    description: 'Amount in the major currency unit',
+  })
   @IsDefined()
   @Type(() => Number)
-  @IsInt()
-  @Min(100)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
   amount: number;
 }
 

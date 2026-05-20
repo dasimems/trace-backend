@@ -11,6 +11,7 @@ import {
 import Keyv from 'keyv';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
 import { LlmService } from '@common/llm/llm.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -55,13 +56,21 @@ export class InsightsService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly llmService: LlmService,
+    private readonly priceService: PriceService,
     @Inject(REDIS_CACHE) private readonly redisCache: Keyv,
   ) {}
 
+  private wrap = (kobo: number) =>
+    this.priceService.constructPriceResponse(kobo, 'NGN');
+
   // ─── Cache helpers ──────────────────────────────────────────────────────
 
+  // Bump when the cached shape changes — old keys won't be read, so stale
+  // pre-Price payloads are effectively invalidated on deploy.
+  private static readonly CACHE_VERSION = 'v2';
+
   private cacheKey(topic: AnalysisTopic, userId: string) {
-    return `insights:${topic}:${userId}`;
+    return `insights:${InsightsService.CACHE_VERSION}:${topic}:${userId}`;
   }
 
   async writeCache<T>(
@@ -195,13 +204,27 @@ export class InsightsService {
   computeRecurringFor(
     transactions: ScoringTransaction[],
   ): RecurringResponseDTO {
-    return { patterns: detectRecurring(transactions) };
+    return {
+      patterns: detectRecurring(transactions).map((p) => ({
+        ...p,
+        averageAmount: this.wrap(p.averageAmount),
+      })),
+    };
   }
 
   computeAnomaliesFor(
     transactions: ScoringTransaction[],
   ): AnomaliesResponseDTO {
-    return { anomalies: detectAnomalies(transactions) };
+    return {
+      anomalies: detectAnomalies(transactions).map((a) => ({
+        ...a,
+        amount: this.wrap(a.amount),
+        expectedRange: {
+          low: this.wrap(a.expectedRange.low),
+          high: this.wrap(a.expectedRange.high),
+        },
+      })),
+    };
   }
 
   async computeWeeklySummaryFor(

@@ -1,3 +1,4 @@
+import { PriceService } from '@common/price/price.service';
 import { PaginationDetailsDTO } from '../base.dto';
 import BaseResponse from '../base.response';
 import AccountResponse from '../account/account.response';
@@ -49,7 +50,10 @@ class UserResponse extends BaseResponse<ResponseType> {
       .join(' ');
   }
 
-  static constructUserDetails(user: UserDetailsDBDto): UserDetailsResponseDTO {
+  static constructUserDetails(
+    user: UserDetailsDBDto,
+    priceService: PriceService,
+  ): UserDetailsResponseDTO {
     return {
       id: user.id,
       email: maskEmail(user.email),
@@ -70,21 +74,25 @@ class UserResponse extends BaseResponse<ResponseType> {
       isAccountCreationCompleted: user.isAccountCreationCompleted,
       createdAt: user.createdAt,
       bankAccounts: user.bankAccounts?.map((account) =>
-        AccountResponse.constructAccountDetails(account),
+        AccountResponse.constructAccountDetails(account, priceService),
       ),
     };
   }
 
-  static createIndividualUserResponse(user: UserDetailsDBDto) {
-    return new UserResponse(this.constructUserDetails(user));
+  static createIndividualUserResponse(
+    user: UserDetailsDBDto,
+    priceService: PriceService,
+  ) {
+    return new UserResponse(this.constructUserDetails(user, priceService));
   }
 
   static createMultipleUserResponse(
     users: UserDetailsDBDto[],
     paginationDetails: PaginationDetailsDTO,
+    priceService: PriceService,
   ) {
     return new UserResponse(
-      users.map((user) => this.constructUserDetails(user)),
+      users.map((user) => this.constructUserDetails(user, priceService)),
       paginationDetails,
     );
   }

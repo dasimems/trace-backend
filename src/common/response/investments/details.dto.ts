@@ -1,12 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { InvestmentDistributionTypeEnum } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class NavHistoryPointDTO {
   @ApiProperty({ type: Date })
   date: Date;
 
-  @ApiProperty({ type: Number, description: 'NAV per unit in kobo' })
-  navPerUnit: number;
+  @ApiProperty({ type: () => Price, description: 'NAV per unit' })
+  navPerUnit: Price;
 
   @ApiProperty({
     type: Number,
@@ -27,8 +28,8 @@ export class NavHistoryResponseDTO {
 }
 
 export class NavSnapshotDTO {
-  @ApiProperty({ type: Number, description: 'Current NAV per unit in kobo' })
-  navPerUnit: number;
+  @ApiProperty({ type: () => Price, description: 'Current NAV per unit' })
+  navPerUnit: Price;
 
   @ApiProperty({ type: Date })
   asOf: Date;
@@ -54,10 +55,10 @@ export class SectorSliceDTO {
   percent: number;
 
   @ApiProperty({
-    type: Number,
-    description: 'AUM share in kobo (illustrative; seeded)',
+    type: () => Price,
+    description: 'AUM share (illustrative; seeded)',
   })
-  amount: number;
+  amount: Price;
 }
 
 export class SectorAllocationResponseDTO {
@@ -72,14 +73,14 @@ export class DistributionDTO {
   @ApiProperty({ type: Date })
   paidAt: Date;
 
-  @ApiProperty({ type: Number, description: 'Payout per unit in kobo' })
-  amountPerUnit: number;
+  @ApiProperty({ type: () => Price, description: 'Payout per unit' })
+  amountPerUnit: Price;
 
   @ApiProperty({
-    type: Number,
+    type: () => Price,
     description: 'Total paid across the fund (illustrative; seeded)',
   })
-  totalPaid: number;
+  totalPaid: Price;
 
   @ApiProperty({ enum: InvestmentDistributionTypeEnum })
   type: InvestmentDistributionTypeEnum;

@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { BankAccountProviderEnum } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class BankAccountResponseDTO {
   @ApiProperty({ type: String })
@@ -23,8 +24,8 @@ export class BankAccountResponseDTO {
   @ApiProperty({ enum: BankAccountProviderEnum, example: BankAccountProviderEnum.SQUAD })
   provider: BankAccountProviderEnum;
 
-  @ApiProperty({ type: Number, example: 0 })
-  balance: number;
+  @ApiProperty({ type: () => Price })
+  balance: Price;
 
   @ApiProperty({ type: Date })
   createdAt: Date;

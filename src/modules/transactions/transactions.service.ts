@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, TransactionDirectionEnum, TransactionStatusEnum } from '@prisma/client';
 import type { CustomRequest } from '@common/authentication/authentication.dto';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -14,7 +15,10 @@ import { GetTransactionsQueryDTO } from './transactions.dto';
 
 @Injectable()
 export class TransactionsService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly priceService: PriceService,
+  ) {}
 
   private startOfMonth(date: Date) {
     const d = new Date(date);
@@ -76,12 +80,11 @@ export class TransactionsService {
       }),
     ]);
 
-    return TransactionResponse.createMultipleTransactionResponse(transactions, {
-      page,
-      limit,
-      totalItems,
-      req,
-    });
+    return TransactionResponse.createMultipleTransactionResponse(
+      transactions,
+      { page, limit, totalItems, req },
+      this.priceService,
+    );
   }
 
   async getTransaction(id: string, req: CustomRequest) {
@@ -96,7 +99,10 @@ export class TransactionsService {
       throw new NotFoundException('Transaction not found.');
     }
 
-    return TransactionResponse.createIndividualTransactionResponse(tx);
+    return TransactionResponse.createIndividualTransactionResponse(
+      tx,
+      this.priceService,
+    );
   }
 
   async getMetrics(req: CustomRequest) {
@@ -167,9 +173,11 @@ export class TransactionsService {
       }),
     ]);
 
+    const wrap = (kobo: number) =>
+      this.priceService.constructPriceResponse(kobo, 'NGN');
     const response: TransactionMetricsResponseDTO = {
-      inflowThisMonth: inflowAgg._sum.amount ?? 0,
-      outflowThisMonth: outflowAgg._sum.amount ?? 0,
+      inflowThisMonth: wrap(inflowAgg._sum.amount ?? 0),
+      outflowThisMonth: wrap(outflowAgg._sum.amount ?? 0),
       inflowSources: inflowSources.length,
       outflowCategories: outflowCategories.length,
       pendingCount,

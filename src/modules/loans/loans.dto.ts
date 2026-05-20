@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   IsDefined,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -17,11 +18,14 @@ export class AffordabilityQueryDTO {
   @IsUUID()
   productId: string;
 
-  @ApiProperty({ type: Number, description: 'Requested amount in kobo' })
+  @ApiProperty({
+    type: Number,
+    description: 'Requested amount in the major currency unit',
+  })
   @IsDefined()
   @Type(() => Number)
-  @IsInt()
-  @Min(100)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
   amount: number;
 
   @ApiProperty({ type: Number, description: 'Tenor in days' })
@@ -40,11 +44,14 @@ export class ApplyForLoanBodyDTO {
   @IsUUID()
   productId: string;
 
-  @ApiProperty({ type: Number, description: 'Requested amount in kobo' })
+  @ApiProperty({
+    type: Number,
+    description: 'Requested amount in the major currency unit',
+  })
   @IsDefined()
   @Type(() => Number)
-  @IsInt()
-  @Min(100)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
   requestedAmount: number;
 
   @ApiProperty({ type: Number, description: 'Tenor in days' })

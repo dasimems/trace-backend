@@ -19,6 +19,7 @@ import {
   RationaleProduct,
   RationaleService,
 } from '@common/insights/rationale.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -52,7 +53,14 @@ export class LoansService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly rationaleService: RationaleService,
+    private readonly priceService: PriceService,
   ) {}
+
+  private wrap = (kobo: number) =>
+    this.priceService.constructPriceResponse(kobo, 'NGN');
+
+  private toKobo = (naira: number) =>
+    this.priceService.convertToSmallestUnit(naira, 'NGN');
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -85,7 +93,7 @@ export class LoansService {
       status: tier.status,
       tier: tier.tier,
       healthScore: tier.healthScore,
-      maxExposure: tier.maxExposure,
+      maxExposure: this.wrap(tier.maxExposure),
       reasons: tier.reasons,
     };
     return new BaseResponse(response);
@@ -120,8 +128,8 @@ export class LoansService {
       provider: p.provider,
       type: p.type,
       interestRateBps: p.interestRateBps,
-      minAmount: p.minAmount,
-      maxAmount: p.maxAmount,
+      minAmount: this.wrap(p.minAmount),
+      maxAmount: this.wrap(p.maxAmount),
       minTenorDays: p.minTenorDays,
       maxTenorDays: p.maxTenorDays,
       requiredTier: p.requiredTier,
@@ -145,9 +153,10 @@ export class LoansService {
     if (!product || !product.isActive) {
       throw new NotFoundException('Loan product not found.');
     }
-    if (query.amount < product.minAmount || query.amount > product.maxAmount) {
+    const amountKobo = this.toKobo(query.amount);
+    if (amountKobo < product.minAmount || amountKobo > product.maxAmount) {
       throw new BadRequestException(
-        `Amount must be between ₦${product.minAmount / 100} and ₦${product.maxAmount / 100}.`,
+        `Amount must be between ${this.wrap(product.minAmount).formatted.withCurrency} and ${this.wrap(product.maxAmount).formatted.withCurrency}.`,
       );
     }
     if (
@@ -164,9 +173,9 @@ export class LoansService {
     // and matches what users intuit.
     const annualRate = product.interestRateBps / 10_000;
     const totalInterest = Math.round(
-      query.amount * annualRate * (query.tenorDays / 365),
+      amountKobo * annualRate * (query.tenorDays / 365),
     );
-    const totalRepayment = query.amount + totalInterest;
+    const totalRepayment = amountKobo + totalInterest;
     const dailyPayment = Math.ceil(totalRepayment / query.tenorDays);
     const weeklyPayment = dailyPayment * 7;
 
@@ -188,11 +197,11 @@ export class LoansService {
       avgDailyInflow > 0 && dailyPayment <= avgDailyInflow * 0.3;
 
     const response: LoanAffordabilityResponseDTO = {
-      principal: query.amount,
-      totalInterest,
-      totalRepayment,
-      dailyPayment,
-      weeklyPayment,
+      principal: this.wrap(amountKobo),
+      totalInterest: this.wrap(totalInterest),
+      totalRepayment: this.wrap(totalRepayment),
+      dailyPayment: this.wrap(dailyPayment),
+      weeklyPayment: this.wrap(weeklyPayment),
       tenorDays: query.tenorDays,
       isAffordable,
     };
@@ -218,17 +227,18 @@ export class LoansService {
         `This product requires ${product.requiredTier} tier; you are ${tier.tier}.`,
       );
     }
+    const requestedKobo = this.toKobo(body.requestedAmount);
     if (
-      body.requestedAmount < product.minAmount ||
-      body.requestedAmount > product.maxAmount
+      requestedKobo < product.minAmount ||
+      requestedKobo > product.maxAmount
     ) {
       throw new BadRequestException(
-        `Amount must be between ₦${product.minAmount / 100} and ₦${product.maxAmount / 100}.`,
+        `Amount must be between ${this.wrap(product.minAmount).formatted.withCurrency} and ${this.wrap(product.maxAmount).formatted.withCurrency}.`,
       );
     }
-    if (body.requestedAmount > tier.maxExposure) {
+    if (requestedKobo > tier.maxExposure) {
       throw new BadRequestException(
-        `Your tier caps exposure at ₦${tier.maxExposure / 100}.`,
+        `Your tier caps exposure at ${this.wrap(tier.maxExposure).formatted.withCurrency}.`,
       );
     }
     if (
@@ -269,7 +279,7 @@ export class LoansService {
     const disbursedAt = new Date();
     const plan = generateLoanPlan(
       product,
-      body.requestedAmount,
+      requestedKobo,
       body.tenorDays,
       disbursedAt,
     );
@@ -282,8 +292,8 @@ export class LoansService {
         data: {
           productId: product.id,
           userId: auth.id,
-          requestedAmount: body.requestedAmount,
-          approvedAmount: body.requestedAmount,
+          requestedAmount: requestedKobo,
+          approvedAmount: requestedKobo,
           interestRateBps: product.interestRateBps,
           totalInterest: plan.totalInterest,
           totalRepayment: plan.totalRepayment,
@@ -308,7 +318,7 @@ export class LoansService {
 
       await tx.bankAccounts.update({
         where: { id: account.id },
-        data: { balance: { increment: body.requestedAmount } },
+        data: { balance: { increment: requestedKobo } },
       });
 
       await tx.transactions.create({
@@ -318,9 +328,9 @@ export class LoansService {
           status: TransactionStatusEnum.SUCCESS,
           category: TransactionCategoryEnum.INCOME,
           description: `${product.name} disbursement`,
-          amount: body.requestedAmount,
-          principalAmount: body.requestedAmount,
-          settledAmount: body.requestedAmount,
+          amount: requestedKobo,
+          principalAmount: requestedKobo,
+          settledAmount: requestedKobo,
           remark: `Loan disbursed (${product.provider})`,
           processedAt: disbursedAt,
           accountId: account.id,
@@ -343,7 +353,7 @@ export class LoansService {
     if (!app || app.userId !== auth.id) {
       throw new NotFoundException('Application not found.');
     }
-    const installments: LoanRepaymentDTO[] = app.repayments.map((r) => ({
+    const rawInstallments = app.repayments.map((r) => ({
       id: r.id,
       sequence: r.sequence,
       dueAt: r.dueAt,
@@ -355,19 +365,31 @@ export class LoansService {
       status: r.status,
       paidAt: r.paidAt ?? undefined,
     }));
-    const totalPaid = installments.reduce((s, i) => s + i.paidAmount, 0);
-    const totalOutstanding = installments.reduce(
+    const totalPaid = rawInstallments.reduce((s, i) => s + i.paidAmount, 0);
+    const totalOutstanding = rawInstallments.reduce(
       (s, i) => s + i.outstandingAmount,
       0,
     );
+    const installments: LoanRepaymentDTO[] = rawInstallments.map((i) => ({
+      id: i.id,
+      sequence: i.sequence,
+      dueAt: i.dueAt,
+      principalAmount: this.wrap(i.principalAmount),
+      interestAmount: this.wrap(i.interestAmount),
+      totalAmount: this.wrap(i.totalAmount),
+      paidAmount: this.wrap(i.paidAmount),
+      outstandingAmount: this.wrap(i.outstandingAmount),
+      status: i.status,
+      paidAt: i.paidAt,
+    }));
     const response: LoanScheduleResponseDTO = {
       applicationId: app.id,
       status: app.status,
-      principal: app.approvedAmount ?? app.requestedAmount,
-      totalInterest: app.totalInterest ?? 0,
-      totalRepayment: app.totalRepayment ?? 0,
-      totalPaid,
-      totalOutstanding,
+      principal: this.wrap(app.approvedAmount ?? app.requestedAmount),
+      totalInterest: this.wrap(app.totalInterest ?? 0),
+      totalRepayment: this.wrap(app.totalRepayment ?? 0),
+      totalPaid: this.wrap(totalPaid),
+      totalOutstanding: this.wrap(totalOutstanding),
       disbursedAt: app.disbursedAt ?? undefined,
       finalDueAt: app.dueAt ?? undefined,
       repaidAt: app.repaidAt ?? undefined,
@@ -423,8 +445,11 @@ export class LoansService {
     return {
       id: app.id,
       productId: app.productId,
-      requestedAmount: app.requestedAmount,
-      approvedAmount: app.approvedAmount ?? undefined,
+      requestedAmount: this.wrap(app.requestedAmount),
+      approvedAmount:
+        app.approvedAmount === null || app.approvedAmount === undefined
+          ? undefined
+          : this.wrap(app.approvedAmount),
       tenorDays: app.tenorDays,
       status: app.status,
       rejectionReason: app.rejectionReason ?? undefined,

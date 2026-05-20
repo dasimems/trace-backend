@@ -3,6 +3,7 @@ import {
   VirtualCardBrandEnum,
   VirtualCardStatusEnum,
 } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class VirtualCardDTO {
   @ApiProperty({ type: String })
@@ -23,11 +24,11 @@ export class VirtualCardDTO {
   @ApiProperty({ enum: VirtualCardStatusEnum })
   status: VirtualCardStatusEnum;
 
-  @ApiProperty({ type: Number, description: 'Monthly spend cap in kobo' })
-  spendLimitMonthly: number;
+  @ApiProperty({ type: () => Price, description: 'Monthly spend cap' })
+  spendLimitMonthly: Price;
 
-  @ApiProperty({ type: Number, description: 'Spend so far this month in kobo' })
-  spentThisMonth: number;
+  @ApiProperty({ type: () => Price, description: 'Spend so far this month' })
+  spentThisMonth: Price;
 
   @ApiProperty({ type: Date })
   createdAt: Date;

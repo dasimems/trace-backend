@@ -1,11 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { TransactionCategoryEnum } from '@prisma/client';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsDefined,
   IsEnum,
-  IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Length,
@@ -77,16 +77,21 @@ export class TransferBodyDTO {
   accountName: string;
 
   @ApiProperty({
-    description: 'Amount to transfer, in kobo (e.g. 10000 = ₦100)',
+    description:
+      'Amount to transfer, in the major currency unit (e.g. 100 = ₦100). Decimals allowed.',
     type: Number,
-    example: 10000,
-    minimum: 100,
-    maximum: 1_000_000_00,
+    example: 100,
+    minimum: 1,
+    maximum: 1_000_000,
   })
   @IsDefined({ message: 'Amount is required' })
-  @IsInt({ message: 'Amount must be an integer (in kobo)' })
-  @Min(100, { message: 'Amount must be at least ₦1 (100 kobo)' })
-  @Max(1_000_000_00, {
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'Amount must be a number with up to 2 decimal places' },
+  )
+  @Min(1, { message: 'Amount must be at least ₦1' })
+  @Max(1_000_000, {
     message: 'Amount cannot exceed ₦1,000,000 per transfer',
   })
   amount: number;
@@ -118,16 +123,21 @@ export class TransferBodyDTO {
 
 export class FundAccountBodyDTO {
   @ApiProperty({
-    description: 'Amount to fund in KOBO (₦1 = 100 kobo). Min ₦100.',
+    description:
+      'Amount to fund in the major currency unit (e.g. 500 = ₦500). Decimals allowed. Min ₦100.',
     type: Number,
-    example: 50000,
-    minimum: 10_000,
-    maximum: 100_000_000_00,
+    example: 500,
+    minimum: 100,
+    maximum: 100_000_000,
   })
   @IsDefined({ message: 'Amount is required' })
-  @IsInt({ message: 'Amount must be an integer (in kobo)' })
-  @Min(10_000, { message: 'Amount must be at least ₦100 (10,000 kobo)' })
-  @Max(100_000_000_00, {
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'Amount must be a number with up to 2 decimal places' },
+  )
+  @Min(100, { message: 'Amount must be at least ₦100' })
+  @Max(100_000_000, {
     message: 'Amount cannot exceed ₦100,000,000 per top-up',
   })
   amount: number;

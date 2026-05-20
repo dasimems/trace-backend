@@ -5,6 +5,7 @@ import {
   TransactionDirectionEnum,
   TransactionStatusEnum,
 } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export class TransactionResponseDTO {
   @ApiProperty({ type: String })
@@ -28,17 +29,17 @@ export class TransactionResponseDTO {
   @ApiProperty({ type: String, required: false })
   description?: string;
 
-  @ApiProperty({ type: Number, description: 'Amount in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Transaction amount' })
+  amount: Price;
 
-  @ApiProperty({ type: Number, description: 'Fee in kobo' })
-  fee: number;
+  @ApiProperty({ type: () => Price, description: 'Fee charged' })
+  fee: Price;
 
-  @ApiProperty({ type: Number, required: false })
-  principalAmount?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  principalAmount?: Price;
 
-  @ApiProperty({ type: Number, required: false })
-  settledAmount?: number;
+  @ApiProperty({ type: () => Price, required: false })
+  settledAmount?: Price;
 
   @ApiProperty({ type: String, example: 'NGN' })
   currency: string;

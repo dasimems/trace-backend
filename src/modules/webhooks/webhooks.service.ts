@@ -10,6 +10,7 @@ import {
   TransactionStatusEnum,
 } from '@prisma/client';
 import { EventBusService } from '@common/events/event-bus.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { SquadService } from '@common/squad/squad.service';
 import {
@@ -30,6 +31,7 @@ export class WebhooksService {
     private readonly eventBus: EventBusService,
     private readonly walletService: WalletService,
     private readonly paymentRequestsService: PaymentRequestsService,
+    private readonly priceService: PriceService,
   ) {}
 
   // Squad amounts come as decimal-string Naira (e.g. "222.00"). Persist in
@@ -132,18 +134,22 @@ export class WebhooksService {
 
     // Notify any active SSE subscribers for this user. Published AFTER the
     // commit so we never tell the client about money that didn't actually land.
+    const currency = payload.currency || 'NGN';
     this.eventBus.publish(account.userId, {
       type: 'wallet.credit.received',
       payload: {
         transactionId: created.id,
         reference: created.reference,
-        amount: creditAmount,
-        balance: created.balance,
+        amount: this.priceService.constructPriceResponse(creditAmount, currency),
+        balance: this.priceService.constructPriceResponse(
+          created.balance,
+          currency,
+        ),
         senderName: payload.sender_name ?? null,
         senderAccountNumber: payload.sender_account_number ?? null,
         senderBank: payload.sender_bank ?? null,
         remark: payload.remark ?? null,
-        currency: payload.currency || 'NGN',
+        currency,
         processedAt: payload.transaction_date ?? new Date().toISOString(),
       },
     });

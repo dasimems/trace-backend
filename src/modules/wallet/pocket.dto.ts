@@ -3,8 +3,8 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsDefined,
   IsEnum,
-  IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -31,12 +31,13 @@ export class CreatePocketBodyDTO {
   @ApiProperty({
     type: Number,
     required: false,
-    description: 'Target amount in kobo (only meaningful for GOAL pockets).',
-    example: 50000000,
+    description:
+      'Target amount in the major currency unit (only meaningful for GOAL pockets).',
+    example: 500_000,
   })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   targetAmount?: number;
 }
@@ -49,10 +50,14 @@ export class UpdatePocketBodyDTO {
   @Transform(toTrimmed, { toClassOnly: true })
   name?: string;
 
-  @ApiProperty({ type: Number, required: false, description: 'Target in kobo' })
+  @ApiProperty({
+    type: Number,
+    required: false,
+    description: 'Target in the major currency unit',
+  })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   targetAmount?: number;
 }
@@ -70,19 +75,27 @@ export class TransferBetweenPocketsBodyDTO {
   @IsUUID()
   toPocketId: string;
 
-  @ApiProperty({ type: Number, description: 'Amount in kobo', example: 50000 })
+  @ApiProperty({
+    type: Number,
+    description: 'Amount in the major currency unit',
+    example: 500,
+  })
   @IsDefined()
   @Type(() => Number)
-  @IsInt()
-  @Min(100)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
   amount: number;
 }
 
 export class AllocateToPocketBodyDTO {
-  @ApiProperty({ type: Number, description: 'Amount in kobo to move from unallocated balance into this pocket' })
+  @ApiProperty({
+    type: Number,
+    description:
+      'Amount in the major currency unit to move from unallocated balance into this pocket',
+  })
   @IsDefined()
   @Type(() => Number)
-  @IsInt()
-  @Min(100)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
   amount: number;
 }

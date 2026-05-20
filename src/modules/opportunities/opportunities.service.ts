@@ -17,6 +17,7 @@ import {
   RationaleProduct,
   RationaleService,
 } from '@common/insights/rationale.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -40,7 +41,14 @@ export class OpportunitiesService {
     private readonly prismaService: PrismaService,
     private readonly rationaleService: RationaleService,
     private readonly llmService: LlmService,
+    private readonly priceService: PriceService,
   ) {}
+
+  private wrap = (kobo: number) =>
+    this.priceService.constructPriceResponse(kobo, 'NGN');
+
+  private toKobo = (naira: number) =>
+    this.priceService.convertToSmallestUnit(naira, 'NGN');
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -399,7 +407,7 @@ export class OpportunitiesService {
   }
 
   private formatNaira(kobo: number): string {
-    return `₦${Math.round(kobo / 100).toLocaleString('en-NG')}`;
+    return this.wrap(kobo).formatted.withCurrency;
   }
 
   // ─── Detail endpoints ─────────────────────────────────────────────────
@@ -410,6 +418,7 @@ export class OpportunitiesService {
     amount: number,
     tenorDays: number | undefined,
   ) {
+    const amountKobo = this.toKobo(amount);
     if (source === 'LOAN') {
       const loan = await this.prismaService.loanProducts.findUnique({
         where: { id },
@@ -417,16 +426,16 @@ export class OpportunitiesService {
       if (!loan) throw new NotFoundException('Opportunity not found.');
       const tenor = tenorDays ?? loan.minTenorDays;
       const annualRate = loan.interestRateBps / 10_000;
-      const totalInterest = Math.round(amount * annualRate * (tenor / 365));
-      const totalRepayment = amount + totalInterest;
+      const totalInterest = Math.round(amountKobo * annualRate * (tenor / 365));
+      const totalRepayment = amountKobo + totalInterest;
       const dailyPayment = Math.ceil(totalRepayment / tenor);
       return new BaseResponse({
-        inputAmount: amount,
+        inputAmount: this.wrap(amountKobo),
         inputTenorDays: tenor,
-        totalRepayment,
-        totalInterest,
-        weeklyPayment: dailyPayment * 7,
-        dailyPayment,
+        totalRepayment: this.wrap(totalRepayment),
+        totalInterest: this.wrap(totalInterest),
+        weeklyPayment: this.wrap(dailyPayment * 7),
+        dailyPayment: this.wrap(dailyPayment),
         // Conservative default — without user context, the FE can re-check
         // via /loans/affordability for the per-user verdict.
         isAffordable: dailyPayment <= 30_000_00,
@@ -439,11 +448,13 @@ export class OpportunitiesService {
       if (!inv) throw new NotFoundException('Opportunity not found.');
       const tenor = inv.tenorDays ?? 365;
       const annualRate = inv.expectedReturnBps / 10_000;
-      const projectedReturn = Math.round(amount * annualRate * (tenor / 365));
+      const projectedReturn = Math.round(
+        amountKobo * annualRate * (tenor / 365),
+      );
       return new BaseResponse({
-        inputAmount: amount,
+        inputAmount: this.wrap(amountKobo),
         inputTenorDays: tenor,
-        projectedValue: amount + projectedReturn,
+        projectedValue: this.wrap(amountKobo + projectedReturn),
         projectedReturnBps: inv.expectedReturnBps,
       });
     }
@@ -452,7 +463,7 @@ export class OpportunitiesService {
     });
     if (!grant) throw new NotFoundException('Opportunity not found.');
     return new BaseResponse({
-      inputAmount: amount,
+      inputAmount: this.wrap(amountKobo),
       inputTenorDays: tenorDays ?? 0,
       eligibilityScore: 60,
     });
@@ -563,8 +574,14 @@ export class OpportunitiesService {
         : undefined;
 
     return new BaseResponse({
-      estimatedNetReceived,
-      estimatedMonthlyCost,
+      estimatedNetReceived:
+        estimatedNetReceived === undefined
+          ? undefined
+          : this.wrap(estimatedNetReceived),
+      estimatedMonthlyCost:
+        estimatedMonthlyCost === undefined
+          ? undefined
+          : this.wrap(estimatedMonthlyCost),
       weeklyBufferPercent,
       approvalConfidencePercent,
       oneLiner: oneLiner.slice(0, 200),
@@ -579,8 +596,8 @@ export class OpportunitiesService {
     if (source === 'GRANT') {
       return new BaseResponse({
         items: [],
-        totalUpfront: 0,
-        totalRecurring: 0,
+        totalUpfront: this.wrap(0),
+        totalRecurring: this.wrap(0),
       });
     }
     type Template = Array<{
@@ -608,24 +625,29 @@ export class OpportunitiesService {
       cycle = 'MONTHLY';
     }
 
-    const items = template.map((t) => ({
+    const amountKobo = this.toKobo(amount);
+    const rawItems = template.map((t) => ({
       label: t.label,
       amount:
         t.amountKobo !== undefined
           ? t.amountKobo
-          : Math.round((amount * (t.ratioBps ?? 0)) / 10_000),
+          : Math.round((amountKobo * (t.ratioBps ?? 0)) / 10_000),
       recurring: t.recurring,
     }));
-    const totalUpfront = items
+    const totalUpfront = rawItems
       .filter((i) => !i.recurring)
       .reduce((s, i) => s + i.amount, 0);
-    const totalRecurring = items
+    const totalRecurring = rawItems
       .filter((i) => i.recurring)
       .reduce((s, i) => s + i.amount, 0);
     return new BaseResponse({
-      items,
-      totalUpfront,
-      totalRecurring,
+      items: rawItems.map((i) => ({
+        label: i.label,
+        amount: this.wrap(i.amount),
+        recurring: i.recurring,
+      })),
+      totalUpfront: this.wrap(totalUpfront),
+      totalRecurring: this.wrap(totalRecurring),
       ...(cycle && totalRecurring > 0 ? { cycle } : {}),
     });
   }

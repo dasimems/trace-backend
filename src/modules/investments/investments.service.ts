@@ -14,6 +14,7 @@ import {
   RationaleProduct,
   RationaleService,
 } from '@common/insights/rationale.service';
+import { PriceService } from '@common/price/price.service';
 import { PrismaService } from '@common/prisma/prisma.service';
 import { TransactionSelect } from '@common/prisma/selects/transaction.select';
 import BaseResponse from '@common/response/base.response';
@@ -33,7 +34,14 @@ export class InvestmentsService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly rationaleService: RationaleService,
+    private readonly priceService: PriceService,
   ) {}
+
+  private wrap = (kobo: number) =>
+    this.priceService.constructPriceResponse(kobo, 'NGN');
+
+  private toKobo = (naira: number) =>
+    this.priceService.convertToSmallestUnit(naira, 'NGN');
 
   private requireAuth(req: CustomRequest) {
     const auth = req.auth;
@@ -69,7 +77,7 @@ export class InvestmentsService {
       type: p.type,
       expectedReturnBps: p.expectedReturnBps,
       riskLevel: p.riskLevel,
-      minAmount: p.minAmount,
+      minAmount: this.wrap(p.minAmount),
       tenorDays: p.tenorDays ?? undefined,
       description: p.description,
       aiRationale: rationales.get(p.id),
@@ -124,7 +132,7 @@ export class InvestmentsService {
     return new BaseResponse({
       points: rows.map((r) => ({
         date: r.date,
-        navPerUnit: r.navPerUnit,
+        navPerUnit: this.wrap(r.navPerUnit),
         returnBps:
           first === 0
             ? 0
@@ -180,7 +188,7 @@ export class InvestmentsService {
         : 0;
 
     return new BaseResponse({
-      navPerUnit: latest.navPerUnit,
+      navPerUnit: this.wrap(latest.navPerUnit),
       asOf: latest.date,
       change24hBps,
       ytdReturnBps,
@@ -193,11 +201,17 @@ export class InvestmentsService {
       select: { id: true, sectorAllocation: true },
     });
     if (!product) throw new NotFoundException('Product not found.');
-    const slices =
+    const rawSlices =
       (product.sectorAllocation as
         | Array<{ sector: string; percent: number; amount: number }>
         | null) ?? [];
-    return new BaseResponse({ slices });
+    return new BaseResponse({
+      slices: rawSlices.map((s) => ({
+        sector: s.sector,
+        percent: s.percent,
+        amount: this.wrap(s.amount),
+      })),
+    });
   }
 
   async getDistributions(productId: string, limit: number) {
@@ -215,8 +229,8 @@ export class InvestmentsService {
       distributions: rows.map((r) => ({
         id: r.id,
         paidAt: r.paidAt,
-        amountPerUnit: r.amountPerUnit,
-        totalPaid: r.totalPaid,
+        amountPerUnit: this.wrap(r.amountPerUnit),
+        totalPaid: this.wrap(r.totalPaid),
         type: r.type,
       })),
     });
@@ -248,7 +262,7 @@ export class InvestmentsService {
     for (const a of allocations) {
       byType.set(a.product.type, (byType.get(a.product.type) ?? 0) + a.currentValue);
     }
-    const holdings: InvestmentHoldingDTO[] = Array.from(byType.entries())
+    const rawHoldings = Array.from(byType.entries())
       .map(([type, amount]) => ({
         type: type as InvestmentHoldingDTO['type'],
         label: this.typeLabel(type),
@@ -259,10 +273,15 @@ export class InvestmentsService {
       .sort((a, b) => b.amount - a.amount);
 
     const response: PortfolioResponseDTO = {
-      totalValue,
-      totalAllocated,
+      totalValue: this.wrap(totalValue),
+      totalAllocated: this.wrap(totalAllocated),
       totalReturnBps,
-      holdings,
+      holdings: rawHoldings.map((h) => ({
+        type: h.type,
+        label: h.label,
+        amount: this.wrap(h.amount),
+        percent: h.percent,
+      })),
       allocations: allocations.map((a) => this.allocationToDTO(a)),
     };
     return new BaseResponse(response);
@@ -289,9 +308,9 @@ export class InvestmentsService {
     if (health.status === 'insufficient_data') {
       const response: SafeToInvestResponseDTO = {
         status: 'insufficient_data',
-        suggested: 0,
-        conservative: 0,
-        aggressive: 0,
+        suggested: this.wrap(0),
+        conservative: this.wrap(0),
+        aggressive: this.wrap(0),
         rationale:
           'We need at least 14 days of activity before suggesting an allocation.',
       };
@@ -313,15 +332,16 @@ export class InvestmentsService {
       .reduce((s, t) => s + t.amount, 0);
     const surplus = Math.max(0, inflow - outflow);
 
+    const surplusPrice = this.wrap(surplus);
     const response: SafeToInvestResponseDTO = {
       status: 'ok',
-      conservative: Math.round(surplus * 0.1),
-      suggested: Math.round(surplus * 0.3),
-      aggressive: Math.round(surplus * 0.6),
+      conservative: this.wrap(Math.round(surplus * 0.1)),
+      suggested: this.wrap(Math.round(surplus * 0.3)),
+      aggressive: this.wrap(Math.round(surplus * 0.6)),
       rationale:
         surplus === 0
           ? 'No surplus over the last 30 days — focus on building reserves first.'
-          : `Based on a ₦${Math.round(surplus / 100).toLocaleString('en-NG')} net surplus over the last 30 days.`,
+          : `Based on a ${surplusPrice.formatted.withCurrency} net surplus over the last 30 days.`,
     };
     return new BaseResponse(response);
   }
@@ -334,9 +354,10 @@ export class InvestmentsService {
     if (!product || !product.isActive) {
       throw new NotFoundException('Investment product not found.');
     }
-    if (body.amount < product.minAmount) {
+    const amountKobo = this.toKobo(body.amount);
+    if (amountKobo < product.minAmount) {
       throw new BadRequestException(
-        `Minimum allocation for this product is ₦${product.minAmount / 100}.`,
+        `Minimum allocation for this product is ${this.wrap(product.minAmount).formatted.withCurrency}.`,
       );
     }
 
@@ -348,7 +369,7 @@ export class InvestmentsService {
       where: { userId: auth.id },
       select: { id: true, balance: true },
     });
-    if (!account || account.balance < body.amount) {
+    if (!account || account.balance < amountKobo) {
       throw new BadRequestException(
         'Insufficient balance for this allocation.',
       );
@@ -361,14 +382,14 @@ export class InvestmentsService {
     const allocation = await this.prismaService.$transaction(async (tx) => {
       await tx.bankAccounts.update({
         where: { id: account.id },
-        data: { balance: { decrement: body.amount } },
+        data: { balance: { decrement: amountKobo } },
       });
       return tx.investmentAllocations.create({
         data: {
           productId: product.id,
           userId: auth.id,
-          amount: body.amount,
-          currentValue: body.amount,
+          amount: amountKobo,
+          currentValue: amountKobo,
           status: InvestmentAllocationStatusEnum.PENDING,
           maturesAt,
         },
@@ -413,8 +434,8 @@ export class InvestmentsService {
     return {
       id: a.id,
       productId: a.productId,
-      amount: a.amount,
-      currentValue: a.currentValue,
+      amount: this.wrap(a.amount),
+      currentValue: this.wrap(a.currentValue),
       status: a.status,
       allocatedAt: a.allocatedAt ?? undefined,
       withdrawnAt: a.withdrawnAt ?? undefined,

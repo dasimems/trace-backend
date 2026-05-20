@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { TransactionCategoryEnum } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 
 export type InsightStatus = 'ok' | 'insufficient_data';
 export type Tone = 'good' | 'lime' | 'info' | 'warn' | 'bad';
@@ -83,8 +84,8 @@ export class RecurringPatternDTO {
   @ApiProperty({ enum: ['CREDIT', 'DEBIT'] })
   direction: 'CREDIT' | 'DEBIT';
 
-  @ApiProperty({ type: Number, description: 'Average amount in kobo' })
-  averageAmount: number;
+  @ApiProperty({ type: () => Price, description: 'Average amount' })
+  averageAmount: Price;
 
   @ApiProperty({
     enum: ['WEEKLY', 'BIWEEKLY', 'MONTHLY', 'IRREGULAR'],
@@ -119,17 +120,17 @@ export class AnomalyDTO {
   @ApiProperty({ enum: TransactionCategoryEnum })
   category: TransactionCategoryEnum;
 
-  @ApiProperty({ type: Number, description: 'Amount in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Anomalous amount' })
+  amount: Price;
 
   @ApiProperty({
     type: 'object',
     properties: {
-      low: { type: 'number' },
-      high: { type: 'number' },
+      low: { type: () => Price },
+      high: { type: () => Price },
     },
   })
-  expectedRange: { low: number; high: number };
+  expectedRange: { low: Price; high: Price };
 
   @ApiProperty({ type: Number })
   zScore: number;

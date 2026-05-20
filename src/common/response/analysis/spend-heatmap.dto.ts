@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Price } from '@common/price/price.dto';
 
 export class SpendHeatmapCellDTO {
   @ApiProperty({
@@ -11,8 +12,8 @@ export class SpendHeatmapCellDTO {
   @ApiProperty({ type: Number, description: '0–23 (UTC hour)', example: 19 })
   hour: number;
 
-  @ApiProperty({ type: Number, description: 'Total spend in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Total spend in cell' })
+  amount: Price;
 
   @ApiProperty({ type: Number, description: 'Number of debits' })
   txCount: number;
@@ -25,8 +26,8 @@ export class SpendHeatmapPeakDTO {
   @ApiProperty({ type: Number })
   hour: number;
 
-  @ApiProperty({ type: Number, description: 'Amount in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Peak-cell spend' })
+  amount: Price;
 }
 
 export class SpendHeatmapResponseDTO {
@@ -43,8 +44,8 @@ export class SpendHeatmapResponseDTO {
   @ApiProperty({ type: Date })
   rangeEnd: Date;
 
-  @ApiProperty({ type: Number, description: 'Total spend in kobo' })
-  totalSpend: number;
+  @ApiProperty({ type: () => Price, description: 'Total spend over range' })
+  totalSpend: Price;
 
   @ApiProperty({
     type: () => SpendHeatmapPeakDTO,

@@ -3,23 +3,24 @@ import {
   PaymentRequestKindEnum,
   PaymentRequestStatusEnum,
 } from '@prisma/client';
+import { Price } from '@common/price/price.dto';
 import { BankAccountResponseDTO } from '../account/account.dto';
 
 export class WalletBalanceDTO {
-  @ApiProperty({ type: Number, description: 'Available balance in kobo' })
-  available: number;
+  @ApiProperty({ type: () => Price, description: 'Available balance' })
+  available: Price;
 
-  @ApiProperty({ type: Number, description: 'Ledger balance in kobo' })
-  ledger: number;
+  @ApiProperty({ type: () => Price, description: 'Ledger balance' })
+  ledger: Price;
 
-  @ApiProperty({ type: Number, description: 'Pending balance in kobo' })
-  pending: number;
+  @ApiProperty({ type: () => Price, description: 'Pending balance' })
+  pending: Price;
 
-  @ApiProperty({ type: Number, description: 'Inflow today, in kobo' })
-  todayInflow: number;
+  @ApiProperty({ type: () => Price, description: 'Inflow today' })
+  todayInflow: Price;
 
-  @ApiProperty({ type: Number, description: 'Outflow today, in kobo' })
-  todayOutflow: number;
+  @ApiProperty({ type: () => Price, description: 'Outflow today' })
+  todayOutflow: Price;
 }
 
 export class WalletResponseDTO {
@@ -47,8 +48,8 @@ export class FundAccountResponseDTO {
   })
   reference: string;
 
-  @ApiProperty({ type: Number, description: 'Requested amount in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Requested amount' })
+  amount: Price;
 
   @ApiProperty({
     type: String,
@@ -71,8 +72,8 @@ export class PaymentRequestDTO {
   @ApiProperty({ enum: PaymentRequestKindEnum, description: 'FUND = self top-up. REQUEST = link shared with someone else.' })
   kind: PaymentRequestKindEnum;
 
-  @ApiProperty({ type: Number, description: 'Amount in kobo' })
-  amount: number;
+  @ApiProperty({ type: () => Price, description: 'Requested amount' })
+  amount: Price;
 
   @ApiProperty({ type: String, example: 'NGN' })
   currency: string;

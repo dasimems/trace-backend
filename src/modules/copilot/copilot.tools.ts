@@ -60,16 +60,17 @@ export const COPILOT_TOOLS: LlmTool[] = [
             description:
               "The loan product name from the catalog. If unsure which product, omit and the tool will pick the best match for the user's tier.",
           },
-          amountKobo: {
+          amountMinor: {
             type: 'number',
-            description: 'Requested amount in kobo (100 kobo = ₦1).',
+            description:
+              "Requested amount in the smallest unit of the user's currency (e.g. kobo for NGN, where 100 kobo = ₦1). The snapshot's `currency` block tells you the unit in play.",
           },
           tenorDays: {
             type: 'number',
             description: 'Loan tenor in days.',
           },
         },
-        required: ['amountKobo', 'tenorDays'],
+        required: ['amountMinor', 'tenorDays'],
       },
     },
   },
@@ -87,12 +88,13 @@ export const COPILOT_TOOLS: LlmTool[] = [
             description:
               "The investment product name from the catalog. If omitted, picks the highest-yield product the user could fund.",
           },
-          amountKobo: {
+          amountMinor: {
             type: 'number',
-            description: 'Amount to allocate, in kobo.',
+            description:
+              "Amount to allocate, in the smallest unit of the user's currency (e.g. kobo for NGN). The snapshot's `currency` block tells you the unit in play.",
           },
         },
-        required: ['amountKobo'],
+        required: ['amountMinor'],
       },
     },
   },
